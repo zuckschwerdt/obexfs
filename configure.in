@@ -1,0 +1,17 @@
+AC_INIT(fuse/obexfs.c)
+AM_INIT_AUTOMAKE(obexfs, 0.1)
+AM_CONFIG_HEADER(config.h)
+
+AC_PROG_CC
+AC_PROG_RANLIB
+
+if test -z "$LD"; then
+	LD=ld
+fi
+AC_SUBST(LD)
+
+CFLAGS="-Wall -W -g -O2"
+
+AC_OUTPUT([Makefile fuse/Makefile])
+
+
