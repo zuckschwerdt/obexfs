@@ -1,7 +1,7 @@
 /*
  *  obexfs.c: FUSE Filesystem to access OBEX
  *
- *  Copyright (c) 2003 Christian W. Zuckschwerdt <zany@triq.net>
+ *  Copyright (c) 2003-2004 Christian W. Zuckschwerdt <zany@triq.net>
  *
  *  This program is free software; you can redistribute it and/or modify it
  *  under the terms of the GNU General Public License as published by the Free
@@ -36,20 +36,13 @@
 #include <dirent.h>
 #include <errno.h>
 #include <sys/statfs.h>
+#include <getopt.h>
 
 #include <obexftp/obexftp.h>
 #include <obexftp/client.h>
 #include <cobexbfb/cobex_bfb.h>
-#include <cobexpe/cobex_pe.h>
 
-/* we do not want to include <linux/msdos_fs.h> */
-#define MSDOS_SUPER_MAGIC     0x4d44
-
-#if __GNUC__
-#define UNUSED __attribute__((unused))
-#else
-#define UNUSED
-#endif
+#define UNUSED(x) x __attribute__((unused))
 
 typedef struct {
 	mode_t	mode;
@@ -68,8 +61,10 @@ typedef struct {
 #define CACHE_TIMEOUT 10
 
 static obexftp_client_t *cli = NULL;
-static char *tty = "/dev/ttyS0";
-static char *transport = "siemens";
+static char *tty = NULL; // "/dev/ttyS0";
+static int transport = 0;
+static char *btaddr = NULL; // "00:11:22:33:44:55";
+static int btchannel = 5; // 10;
 
 static int info;
 static int body_len;
@@ -136,13 +131,8 @@ static int ofs_connect()
                 return 0;
 
         if (tty != NULL) {
-                if ((transport != NULL) && !strcasecmp(transport, "ericsson")) {
-                        /* Custom transport set to 'Ericsson' */
-                        ctrans = cobex_pe_ctrans (tty);
-                } else {
-                        /* Custom transport set to 'Siemens' */
-                        ctrans = cobex_ctrans (tty);
-                }
+                /* Custom transport Siemens/Ericsson */
+                ctrans = cobex_ctrans (tty);
         }
         else {
                 /* No custom transport */
@@ -150,7 +140,7 @@ static int ofs_connect()
         }
 
         /* Open */
-        cli = obexftp_cli_open (ofs_info_cb, ctrans, NULL);
+        cli = obexftp_cli_open (transport, ctrans, ofs_info_cb, NULL);
         if(cli == NULL) {
                 /* Error opening obexftp-client */
                 return -1;
@@ -159,9 +149,10 @@ static int ofs_connect()
         for (retry = 0; retry < 3; retry++) {
 
                 /* Connect */
-                if (obexftp_cli_connect (cli) >= 0)
+                if (obexftp_cli_connect (cli, btaddr, btchannel) >= 0)
                         return 0;
                 /* Still trying to connect */
+		sleep(1);
         }
 
         cli = NULL;
@@ -302,6 +293,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 			/* dir found */
 			for (dir = cache[i].dir; dir && dir->name; dir++) {
 				if (strcmp(p, dir->name) == 0) {
+					printf("found entry %s\n", dir->name);
 					stbuf->st_mode = dir->mode;
 					stbuf->st_nlink = 1;
 					stbuf->st_uid = getuid();
@@ -345,6 +337,7 @@ static int ofs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 	}
 	cache_ptr++;
 
+	printf("<<<<%s>>>>\n", path);
 	ofs_disconnect();
 	return 0;
 }
@@ -372,7 +365,7 @@ static int ofs_mkdir(const char *path, mode_t UNUSED(mode))
 			tail++;
 		}
 
-		(void) obexftp_setpath(cli, p, 0);
+		(void) obexftp_setpath(cli, p);
 	}
 
 	free(tail);
@@ -412,7 +405,7 @@ static int ofs_rename(const char *from, const char *to)
 
 static int ofs_truncate(const char *path, off_t size)
 {
-	printf("Truncating %s to %ld\n", path, size);
+	printf("Truncating %s to %lld\n", path, size);
 
 	return 0;
 }
@@ -441,7 +434,7 @@ static int ofs_read(const char *path, char *buf, size_t size, off_t offset)
 
 		ofs_disconnect();
 	}
-	printf("reading %s at %ld for %d\n", path, offset, size);
+	printf("reading %s at %lld for %d\n", path, offset, size);
 	memcpy(buf, xfer_data + offset, size);
 
 	if (offset + (unsigned)size <= (unsigned)xfer_len)
@@ -451,17 +444,17 @@ static int ofs_read(const char *path, char *buf, size_t size, off_t offset)
 
 static int ofs_write(const char *path, const char *UNUSED(buf), size_t size, off_t offset)
 {
-	printf("Writing %s at %ld for %d\n", path, offset, size);
+	printf("Writing %s at %lld for %d\n", path, offset, size);
 
 	return 0;
 }
 
-static int ofs_statfs(struct statfs *fst)
+static int ofs_statfs(struct fuse_statfs *fst)
 {
 	int res;
 	int size, free;
 
-	memset(fst, 0, sizeof(struct statfs));
+	memset(fst, 0, sizeof(struct fuse_statfs));
 
 	res = ofs_connect();
 	if(res < 0)
@@ -475,16 +468,13 @@ static int ofs_statfs(struct statfs *fst)
  
 	ofs_disconnect();
 
-	/* fst->f_type;     / * type of filesystem (see below) */
-	fst->f_bsize = 1;    /* optimal transfer block size */
-	fst->f_blocks = size;   /* total data blocks in file system */
-	fst->f_bfree = free;    /* free blocks in fs */
-	fst->f_bavail = free;   /* free blocks avail to non-superuser */
+	fst->block_size = 1;    /* optimal transfer block size */
+	fst->blocks = size;   /* total data blocks in file system */
+	fst->blocks_free = free;    /* free blocks in fs */
 
-	/* long    f_files;    / * total file nodes in file system */
-	/* long    f_ffree;    / * free file nodes in fs */
-	/* fsid_t  f_fsid;     / * file system id */
-	/* fst->f_namelen;  / * maximum length of filenames */
+	/* fst->files;    / * total file nodes in file system */
+	/* fst->files_free;    / * free file nodes in fs */
+	/* fst->namelen;  / * maximum length of filenames */
 
 	return 0;
 }
@@ -508,10 +498,89 @@ static struct fuse_operations ofs_oper = {
 	read:		ofs_read,
 	write:		ofs_write,
 	statfs:		ofs_statfs,
+	release:	NULL,
+	fsync:		NULL
+		
 };
 
 int main(int argc, char *argv[])
 {
-	fuse_main(argc, argv, &ofs_oper);
+	while (1) {
+		int option_index = 0;
+		int c;
+		static struct option long_options[] = {
+			{"irda",	no_argument, NULL, 'i'},
+			{"bluetooth",	required_argument, NULL, 'b'},
+			{"channel",	required_argument, NULL, 'B'},
+			{"tty",		required_argument, NULL, 't'},
+			{"help",	no_argument, NULL, 'h'},
+			{"usage",	no_argument, NULL, 'u'},
+			{0, 0, 0, 0}
+		};
+		
+		c = getopt_long (argc, argv, "+ib:B:t:h",
+				 long_options, &option_index);
+		if (c == -1)
+			break;
+
+		switch (c) {
+		
+		case 'i':
+			transport = OBEX_TRANS_IRDA;
+			break;
+		
+		case 'b':
+			transport = OBEX_TRANS_BLUETOOTH;
+			if (btaddr != NULL)
+				free (btaddr);
+       			btaddr = optarg;
+			break;
+			
+		case 'B':
+			btchannel = atoi(optarg);
+			break;
+		
+		case 't':
+			transport = OBEX_TRANS_CUSTOM;
+			if (tty != NULL)
+				free (tty);
+
+			if (!strcasecmp(optarg, "irda"))
+				tty = NULL;
+			else
+				tty = optarg;
+			break;
+
+		case 'h':
+		case 'u':
+			printf("Usage: %s [-i | -b <dev> [-B <chan>] | -t <dev>] [-- <fuse options>]\n"
+				"Transfer files from/to Mobile Equipment.\n"
+				"Copyright (c) 2002-2004 Christian W. Zuckschwerdt\n"
+				"\n"
+				" -i, --irda                  connect using IrDA transport\n"
+				" -b, --bluetooth <device>    connect to this bluetooth device\n"
+				" -B, --channel <number>      use this bluetooth channel when connecting\n"
+				" -t, --tty <device>          connect to this tty using a custom transport\n\n"
+				" -h, --help, --usage         this help text\n\n"
+				"Options to fusermount need to be preceeded by two dashes (--).\n"
+				"\n",
+				argv[0]);
+			exit(0);
+			break;
+
+		default:
+			printf("Try `%s --help' for more information.\n",
+				 argv[0]);
+			exit(0);
+		}
+	}
+
+	if (transport == 0) {
+	       	fprintf(stderr, "No device selected. Use --help for help.\n");
+		exit(0);
+	}
+
+	argv[optind-1] = argv[0];
+	fuse_main(argc-optind+1, &argv[optind-1], &ofs_oper);
 	return 0;
 }

@@ -1,8 +1,8 @@
 ## Process this file with automake to produce Makefile.in
 
 LDADD =				-lfuse -lpthread \
-				-lopenobex -lobexftp \
-				-lcobexbfb -lbfb -lcobexpe
+				-lopenobex -lbluetooth \
+				-L/var/tmp/y/usr/local/lib -lobexftp -lcobexbfb -lbfb
 
 obexfs_SOURCES =		obexfs.c
 
