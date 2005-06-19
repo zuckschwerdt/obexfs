@@ -1,0 +1,6 @@
+2005-06-13  Christian W. Zuckschwerdt  <zany@triq.net>
+
+	* removed caching
+	* implemented file writing support
+	* updated to obexftp 0.10.3 and fuse 2.2
+

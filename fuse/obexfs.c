@@ -1,7 +1,7 @@
 /*
  *  obexfs.c: FUSE Filesystem to access OBEX
  *
- *  Copyright (c) 2003-2004 Christian W. Zuckschwerdt <zany@triq.net>
+ *  Copyright (c) 2003-2005 Christian W. Zuckschwerdt <zany@triq.net>
  *
  *  This program is free software; you can redistribute it and/or modify it
  *  under the terms of the GNU General Public License as published by the Free
@@ -20,12 +20,14 @@
  */
 /*
  * Created at:    2003-01-05
- * This really should be a wrapper only. ObexFTPs API needs some more work.
+ * This is just a wrapper. ObexFTP API does the real work.
  */
 
 /* strndup */
 #define _GNU_SOURCE
 
+/* at least fuse v 2.2 is needed */
+#define FUSE_USE_VERSION 22
 #include <fuse.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,29 +38,24 @@
 #include <dirent.h>
 #include <errno.h>
 #include <sys/statfs.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <signal.h>
 #include <getopt.h>
 
 #include <obexftp/obexftp.h>
 #include <obexftp/client.h>
+#include <obexftp/uuid.h>
 #include <cobexbfb/cobex_bfb.h>
 
 #define UNUSED(x) x __attribute__((unused))
 
-typedef struct {
-	mode_t	mode;
-	char	*name;
-	off_t	size;
-	time_t	mtime;
-} ofs_dir_t;
-
-typedef struct {
-	char *name;
-	time_t	time;
-	ofs_dir_t *dir;
-} ofs_cache_t;
-
-#define CACHE_SIZE 30
-#define CACHE_TIMEOUT 10
+#define DEBUGOUPUT
+#ifdef DEBUGOUPUT
+#define DEBUG(...) fprintf(stderr, __VA_ARGS__)
+#else
+#define DEBUG(...) do { } while (0)
+#endif
 
 static obexftp_client_t *cli = NULL;
 static char *tty = NULL; // "/dev/ttyS0";
@@ -66,63 +63,17 @@ static int transport = 0;
 static char *btaddr = NULL; // "00:11:22:33:44:55";
 static int btchannel = 5; // 10;
 
-static int info;
-static int body_len;
-static char *body_data;
+static char *mknod_dummy = NULL; /* bad coder, no cookies! */
 
-static int xfer_len;
-static char *xfer_name;
-static char *xfer_data;
+static int nodal = 0;
 
-static ofs_cache_t cache[CACHE_SIZE];
-static int cache_ptr = 0;
+typedef struct data_buffer data_buffer_t;
+struct data_buffer {
+	size_t size;
+	char *data;
+};
 
-static void ofs_info_cb(int event, const char *msg, int len, void *UNUSED(data))
-{
-        switch (event) {
-
-        case OBEXFTP_EV_ERRMSG:
-                break;
-
-        case OBEXFTP_EV_ERR:
-                break;
-        case OBEXFTP_EV_OK:
-                break;
-
-        case OBEXFTP_EV_CONNECTING:
-                break;
-        case OBEXFTP_EV_DISCONNECTING:
-                break;
-        case OBEXFTP_EV_SENDING:
-                break;
-        case OBEXFTP_EV_RECEIVING:
-                break;
-
-        case OBEXFTP_EV_LISTENING:
-                break;
-
-        case OBEXFTP_EV_CONNECTIND:
-                break;
-        case OBEXFTP_EV_DISCONNECTIND:
-                break;
-
-        case OBEXFTP_EV_INFO:
-		info = (int)msg;
-                break;
-
-        case OBEXFTP_EV_BODY:
-                body_len = len;
-		body_data = malloc(len);
-		if (body_data)
-                        memcpy(body_data, msg, len);
-                break;
-
-        case OBEXFTP_EV_PROGRESS:
-                break;
-        }
-}
-
-static int ofs_connect()
+static int ofs_cli_open()
 {
 	static obex_ctrans_t *ctrans = NULL;
         int retry;
@@ -140,7 +91,7 @@ static int ofs_connect()
         }
 
         /* Open */
-        cli = obexftp_cli_open (transport, ctrans, ofs_info_cb, NULL);
+        cli = obexftp_cli_open (transport, ctrans, NULL, NULL);
         if(cli == NULL) {
                 /* Error opening obexftp-client */
                 return -1;
@@ -159,7 +110,7 @@ static int ofs_connect()
         return -1;
 }
 
-static void ofs_disconnect()
+static void ofs_cli_close()
 {
         if (cli != NULL) {
                 /* Disconnect */
@@ -170,107 +121,28 @@ static void ofs_disconnect()
 	cli = NULL;
 }
 
-static time_t ofs_atotime (const char *date)
+static int ofs_connect()
 {
-	struct tm tm;
-
-	if (6 == sscanf(date, "%4d%2d%2dT%2d%2d%2d",
-			&tm.tm_year, &tm.tm_mday, &tm.tm_mon,
-			&tm.tm_hour, &tm.tm_min, &tm.tm_sec)) {
-		tm.tm_year -= 1900;
-		tm.tm_mon--;
+	if (!cli)
+		return -1;
+	if (++nodal > 1) {
+		nodal--;
+		return -EBUSY;
 	}
-	tm.tm_isdst = 0;
-
-	return mktime(&tm);
+	return 0;
 }
 
-/* very limited - not multi-byte character save */
-static int ofs_parse_list (const char *list, int length)
+static void ofs_disconnect()
 {
-        char *copysz;
-        char *line;
-        char *p;
-        char name[200]; // bad coder
-        char mod[200]; // - no biscuits!
-        char size[200]; // int would be ok too.
-
-	ofs_dir_t *dir_start;
-	ofs_dir_t *dir;
-	int i;
-
-        copysz = strndup (list, length); /* hehe there is our sz */
-
-	/* prepare a cache to hold this dir */
-	p = copysz;
-	for (i = 0; p && *p; p = strchr(++p, '\n')) i++;
-	printf("%d cache lines\n", i);
-	dir_start = dir = malloc(sizeof(ofs_dir_t) * i);
-
-        for (line = copysz; *line != '\0'; ) {
-		
-		p = line;
-                line = strchr(line, '\n');
-		if (!line)
-			break;
-		*line = '\0';
-		line++;
-		/* can sscanf skip leading whitespace? */
-		while (*p == ' ') p++;
-
-                if (2 == sscanf (p, "<folder name=\"%[^\"]\" modified=\"%[^\"]\"", name, mod)) {
-                        dir->mode = S_IFDIR | 0755;
-                        dir->name = strdup(name);
-			dir->mtime = ofs_atotime(mod);
-                        dir->size = 0;
-			dir++;
-                }
-                if (3 == sscanf (p, "<file name=\"%[^\"]\" size=\"%[^\"]\" modified=\"%[^\"]\"", name, size, mod)) {
-                        dir->mode = S_IFREG | 0644;
-                        dir->name = strdup(name);
-			dir->mtime = ofs_atotime(mod);
-			dir->size = 0;
-			sscanf(size, "%i", &i);
-			dir->size = i; /* int to off_t */
-			dir++;
-                }
-                // handle hidden folder!
-
-        }
-
-        free (copysz);
-	dir->name = NULL;
-	cache[cache_ptr].dir = dir_start;
-
-        return 0;
+	nodal--;
 }
-/*
-static ofs_dir_t *ofs_dir(const char *path)
-{
-	int i;
-	int prefix;
 
-	prefix = strrchr(path, '/') - path;
-	printf("looking for dir %s\n", path);
-	for (i = 0; i < cache_ptr; i++) {
-		printf("comparing to dir %s (%d)\n", cache[i].name, prefix);
-		if (strncmp(path, cache[i].name, prefix) == 0) {
-			printf("found dir %s\n", cache[i].name);
-			return cache[i].dir;
-		}
-	}
-
-	return NULL;
-}
-*/
 static int ofs_getattr(const char *path, struct stat *stbuf)
 {
-	char *p;
-	int prefix;
-	int i;
-	ofs_dir_t *dir;
+	stat_entry_t *st;
+	int res;
 
-	if(strcmp(path, "/") == 0) {
+	if(!path || *path == '\0' || !strcmp(path, "/")) {
 		stbuf->st_mode = S_IFDIR | 0755;
 		stbuf->st_nlink = 1;
 		stbuf->st_uid = getuid();
@@ -280,96 +152,106 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 		stbuf->st_atime = stbuf->st_mtime = stbuf->st_ctime = time(NULL);
 		return 0;
 	}
+	
+	DEBUG("ofs_getattr '%s'\n", path);
 
-	p = strrchr(path, '/');
-	prefix = p - path;
-	p++;
-
-	printf("looking for dir %s\n", path);
-	for (i = 0; i < cache_ptr; i++) {
-		printf("comparing to dir %s (%d)\n", cache[i].name, prefix);
-		if (strncmp(path, cache[i].name, prefix) == 0) {
-			printf("found dir %s\n", cache[i].name);
-			/* dir found */
-			for (dir = cache[i].dir; dir && dir->name; dir++) {
-				if (strcmp(p, dir->name) == 0) {
-					printf("found entry %s\n", dir->name);
-					stbuf->st_mode = dir->mode;
-					stbuf->st_nlink = 1;
-					stbuf->st_uid = getuid();
-					stbuf->st_gid = getgid();
-					stbuf->st_size = dir->size;
-					stbuf->st_blocks = 0;
-					stbuf->st_atime = stbuf->st_mtime = stbuf->st_ctime = dir->mtime;
-					return 0;
-				}
-			}
-		}
+	if (mknod_dummy && !strcmp(path, mknod_dummy)) {
+		stbuf->st_mode = S_IFREG | 0755;
+		stbuf->st_nlink = 1;
+		stbuf->st_uid = getuid();
+		stbuf->st_gid = getgid();
+		stbuf->st_size = 0;
+		stbuf->st_blocks = 0;
+		stbuf->st_atime = stbuf->st_mtime = stbuf->st_ctime = time(NULL);
+		free(mknod_dummy);
+		return 0;
 	}
-	return -ENOENT;
+
+	res = ofs_connect();
+	if(res < 0)
+		return res; /* errno */
+	
+	st = obexftp_stat(cli, path);
+
+	ofs_disconnect();
+	
+	if (!st)
+		return -ENOENT;
+
+	stbuf->st_mode = st->mode;
+	stbuf->st_nlink = 1;
+	stbuf->st_uid = getuid();
+	stbuf->st_gid = getgid();
+	stbuf->st_size = st->size;
+	stbuf->st_blksize = 512; /* they expect us to do so... */
+	stbuf->st_blocks = (st->size + stbuf->st_blksize) / stbuf->st_blksize;
+	stbuf->st_mtime = st->mtime;
+	stbuf->st_atime = st->mtime;
+	stbuf->st_ctime = st->mtime;
+
+	return 0;
 }
 
 static int ofs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 {
-	int res = 0;
-	ofs_dir_t *dir;
+	DIR *dir;
+	stat_entry_t *ent;
+	struct stat stat;
+	int res;
 
 	res = ofs_connect();
 	if(res < 0)
 		return res; /* errno */
 
-	/* List folder */
-	cache[cache_ptr].name = strdup(path);
-	printf(">>>>%s<<<<\n", path);
-	if (path && strlen (path) >1)
-		path++;
-	res = obexftp_list(cli, NULL, path);
-	if(res <= 0)
-		return -1; /* errno */
+	dir = obexftp_opendir(cli, path);
+	
+	if (!dir) {
+		ofs_disconnect();
+		return -ENOENT;
+	}
 
-	ofs_parse_list(body_data, body_len);
-	free(body_data);
-
-	for (dir = cache[cache_ptr].dir; dir && dir->name; dir++) {
-		res = filler(h, dir->name, S_ISDIR(dir->mode) ? DT_DIR : DT_REG);
+	while ((ent = obexftp_readdir(dir)) && *ent->name) {
+		DEBUG("GETDIR:%s\n", ent->name);
+		stat.st_mode = S_ISDIR(ent->mode) ? DT_DIR : DT_REG;
+		res = filler(h, ent->name, S_ISDIR(ent->mode) ? DT_DIR : DT_REG, 0);
 		if(res != 0)
 			break;
 	}
-	cache_ptr++;
+	obexftp_closedir(dir);
 
-	printf("<<<<%s>>>>\n", path);
 	ofs_disconnect();
+
+	return 0;
+}
+
+/* needed for creating files and writing to them */
+static int ofs_mknod(const char *path, mode_t UNUSED(mode), dev_t UNUSED(dev))
+{
+	/* check for access */
+	
+	/* create dummy for subsequent stat */
+	if (mknod_dummy)
+		free(mknod_dummy);
+	mknod_dummy = strdup(path);
+
 	return 0;
 }
 
 static int ofs_mkdir(const char *path, mode_t UNUSED(mode))
 {
 	int res;
-	char *p, *tail;
 
 	if(!path || *path != '/')
 		return 0;
-
-	tail = strdup(path);
 
 	res = ofs_connect();
 	if(res < 0)
 		return res; /* errno */
 
-        for (tail++; tail && *tail != '\0'; ) {
-		
-		p = tail;
-                tail = strchr(tail, '/');
-		if (tail) {
-			*tail = '\0';
-			tail++;
-		}
+	(void) obexftp_setpath(cli, path, 1);
 
-		(void) obexftp_setpath(cli, p);
-	}
-
-	free(tail);
 	ofs_disconnect();
+
 	return 0;
 }
 
@@ -377,14 +259,17 @@ static int ofs_unlink(const char *path)
 {
 	int res;
 
+	if(!path || *path != '/')
+		return 0;
+
 	res = ofs_connect();
 	if(res < 0)
 		return res; /* errno */
 
-	path++;
 	(void) obexftp_del(cli, path);
 
 	ofs_disconnect();
+
 	return 0;
 }
 
@@ -392,6 +277,13 @@ static int ofs_unlink(const char *path)
 static int ofs_rename(const char *from, const char *to)
 {
 	int res;
+
+	if(!from || *from != '/')
+		return 0;
+
+	if(!to || *to != '/')
+		return 0;
+
 	res = ofs_connect();
 	if(res < 0)
 		return res; /* errno */
@@ -403,78 +295,148 @@ static int ofs_rename(const char *from, const char *to)
 	return 0;
 }
 
-static int ofs_truncate(const char *path, off_t size)
+/* needed for overwriting files */
+int ofs_truncate(const char *path, off_t offset)
 {
-	printf("Truncating %s to %lld\n", path, size);
-
+	DEBUG("%s called. This is a dummy!\n", __func__);
 	return 0;
 }
 
 /* well RWX for everyone I guess! */
-static int ofs_open(const char *UNUSED(path), int UNUSED(flags))
+static int ofs_open(const char *UNUSED(path), struct fuse_file_info *fi)
 {
+	data_buffer_t *wb;
+	
+	wb = calloc(1, sizeof(data_buffer_t));
+	if (!wb)
+		return -1;
+	fi->fh = (unsigned long)wb;
+	
     return 0;
 }
 
-static int ofs_read(const char *path, char *buf, size_t size, off_t offset)
+static int ofs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *UNUSED(fi))
 {
+	data_buffer_t *wb;
 	int res = 0;
+	int actual;
 
-	if (!xfer_name || strcmp(path, xfer_name)) {
+	if(!path || *path != '/')
+		return 0;
 
-		xfer_name = strdup(path);
+	wb = (data_buffer_t *)fi->fh;
+	if (!wb->data) {
+
 		res = ofs_connect();
 		if(res < 0)
 			return res; /* errno */
 
-		path++;
 		(void) obexftp_get(cli, NULL, path);
-		xfer_len = body_len;
-		xfer_data = body_data;
+		wb->size = cli->buf_size;
+		wb->data = cli->buf_data; /* would be better to memcpy this */
+		//cli->buf_data = NULL; /* no the data is ours -- without copying */
 
 		ofs_disconnect();
 	}
-	printf("reading %s at %lld for %d\n", path, offset, size);
-	memcpy(buf, xfer_data + offset, size);
+	actual = wb->size - offset;
+	if (actual > size)
+		actual = size;
+	DEBUG("reading %s at %lld for %d (peek: %02x\n", path, offset, actual, wb->data[offset]);
+	memcpy(buf, wb->data + offset, actual);
 
-	if (offset + (unsigned)size <= (unsigned)xfer_len)
-		return size;
-	return xfer_len - offset;
+	return actual;
 }
 
-static int ofs_write(const char *path, const char *UNUSED(buf), size_t size, off_t offset)
+static int ofs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-	printf("Writing %s at %lld for %d\n", path, offset, size);
+	data_buffer_t *wb;
+	size_t newsize;
+	DEBUG("Writing %s at %lld for %d\n", path, offset, size);
+	wb = (data_buffer_t *)fi->fh;
+
+	if (!wb)
+		return -1;
+	
+	if (offset + size > wb->size)
+		newsize = offset + size;
+	else
+		newsize = size;
+	
+	if (!wb->data)
+		wb->data = malloc(newsize);
+	else if (newsize != size)
+		wb->data = realloc(wb->data, newsize);
+	if (!wb->data)
+		return -1;
+	wb->size = newsize;
+
+	DEBUG("memcpy to %ld (%ld) from %ld cnt %ld\n", wb->data + offset, wb->data, buf, size);
+	(void) memcpy(&wb->data[offset], buf, size);
+
+	return size;
+}
+
+static int ofs_release(const char *path, struct fuse_file_info *fi)
+{
+	data_buffer_t *wb;
+	int res;
+	
+	wb = (data_buffer_t *)fi->fh;
+	DEBUG("Releasing: %s (%ld)\n", path, wb);
+	if (wb && wb->data) {
+		DEBUG("Now writing %s for %d (%02x)\n", path, wb->size, wb->data[0]);
+
+		res = ofs_connect();
+		if(res < 0)
+			return res; /* errno */
+
+		(void) obexftp_put_data(cli, wb->data, wb->size, path);
+
+		ofs_disconnect();
+
+		free(wb->data);
+		free(wb);
+	}
 
 	return 0;
 }
 
-static int ofs_statfs(struct fuse_statfs *fst)
+static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
 {
 	int res;
 	int size, free;
 
-	memset(fst, 0, sizeof(struct fuse_statfs));
+	memset(st, 0, sizeof(struct statfs));
 
 	res = ofs_connect();
 	if(res < 0)
 		return res; /* errno */
+
+	/* for S45 */
+	(void) obexftp_cli_disconnect (cli);
+	(void) obexftp_cli_connect_uuid (cli, btaddr, btchannel, UUID_S45);
  
 	/* Retrieve Infos */
 	(void) obexftp_info(cli, 0x01);
-	size = info;
+	size = cli->apparam_info;
 	(void) obexftp_info(cli, 0x02);
-	free = info;
+	free = cli->apparam_info;
  
+ DEBUG("%s: GOT FS STAT: %d / %d\n", __func__, free, size);
+ 
+	(void) obexftp_cli_disconnect (cli);
+	(void) obexftp_cli_connect (cli, btaddr, btchannel);
+
 	ofs_disconnect();
 
-	fst->block_size = 1;    /* optimal transfer block size */
-	fst->blocks = size;   /* total data blocks in file system */
-	fst->blocks_free = free;    /* free blocks in fs */
+	st->f_bsize = 1;	/* optimal transfer block size */
+	st->f_blocks = size;	/* total data blocks in file system */
+	st->f_bfree = free;	/* free blocks in fs */
+	st->f_bavail = free;	/* free blocks avail to non-superuser */
 
-	/* fst->files;    / * total file nodes in file system */
-	/* fst->files_free;    / * free file nodes in fs */
-	/* fst->namelen;  / * maximum length of filenames */
+	/* st->f_files;		/ * total file nodes in file system */
+	/* st->f_ffree;		/ * free file nodes in fs */
+	/* st->f_namelen;	/ * maximum length of filenames */
 
 	return 0;
 }
@@ -482,8 +444,11 @@ static int ofs_statfs(struct fuse_statfs *fst)
 static struct fuse_operations ofs_oper = {
 	getattr:	ofs_getattr,
 	readlink:	NULL,
+	opendir:	NULL,
+	readdir:	NULL,
+	releasedir:	NULL,
 	getdir:		ofs_getdir,
-	mknod:		NULL,
+	mknod:		ofs_mknod,
 	mkdir:		ofs_mkdir,
 	symlink:	NULL,
 	unlink:		ofs_unlink,
@@ -498,13 +463,21 @@ static struct fuse_operations ofs_oper = {
 	read:		ofs_read,
 	write:		ofs_write,
 	statfs:		ofs_statfs,
-	release:	NULL,
+	release:	ofs_release,
+	flush:		NULL,
 	fsync:		NULL
-		
 };
+
+void clean_exit(int signum) {
+	fprintf(stderr, "received signal %d: terminating...\n", signum);
+	ofs_cli_close();
+	return;
+}
 
 int main(int argc, char *argv[])
 {
+	int res;
+	
 	while (1) {
 		int option_index = 0;
 		int c;
@@ -553,9 +526,10 @@ int main(int argc, char *argv[])
 
 		case 'h':
 		case 'u':
+			/* printf("ObexFS %s\n", VERSION); */
 			printf("Usage: %s [-i | -b <dev> [-B <chan>] | -t <dev>] [-- <fuse options>]\n"
 				"Transfer files from/to Mobile Equipment.\n"
-				"Copyright (c) 2002-2004 Christian W. Zuckschwerdt\n"
+				"Copyright (c) 2002-2005 Christian W. Zuckschwerdt\n"
 				"\n"
 				" -i, --irda                  connect using IrDA transport\n"
 				" -b, --bluetooth <device>    connect to this bluetooth device\n"
@@ -581,6 +555,22 @@ int main(int argc, char *argv[])
 	}
 
 	argv[optind-1] = argv[0];
+
+	/* if we see any of these, terminate */
+	signal(SIGINT, clean_exit);
+	signal(SIGKILL, clean_exit);
+	signal(SIGPIPE, clean_exit);
+
+        /* Open connection */
+	res = ofs_cli_open();
+	if(res < 0)
+		return res; /* errno */
+	
+	/* loop */
 	fuse_main(argc-optind+1, &argv[optind-1], &ofs_oper);
+	
+        /* Close connection */
+	ofs_cli_close();
+
 	return 0;
 }
