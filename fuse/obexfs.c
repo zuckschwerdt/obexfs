@@ -62,6 +62,7 @@ static char *tty = NULL; // "/dev/ttyS0";
 static int transport = 0;
 static char *btaddr = NULL; // "00:11:22:33:44:55";
 static int btchannel = 5; // 10;
+static int nonblock = 0;
 
 static char *mknod_dummy = NULL; /* bad coder, no cookies! */
 
@@ -71,6 +72,7 @@ typedef struct data_buffer data_buffer_t;
 struct data_buffer {
 	size_t size;
 	char *data;
+	int write_mode; /* is this a write buffer? */
 };
 
 static int ofs_cli_open()
@@ -125,16 +127,25 @@ static int ofs_connect()
 {
 	if (!cli)
 		return -1;
-	if (++nodal > 1) {
-		nodal--;
-		return -EBUSY;
+	if (nonblock) {
+		if (++nodal > 1) {
+			nodal--;
+			return -EBUSY;
+		}
+	} else {
+		while (++nodal > 1) {
+			nodal--;
+			sleep(1);
+		}
 	}
+	DEBUG("%s() >>>blocking<<<\n", __func__);
 	return 0;
 }
 
 static void ofs_disconnect()
 {
 	nodal--;
+	DEBUG("%s() <<<unblocking>>>\n", __func__);
 }
 
 static int ofs_getattr(const char *path, struct stat *stbuf)
@@ -153,7 +164,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 		return 0;
 	}
 	
-	DEBUG("ofs_getattr '%s'\n", path);
+	DEBUG("%s() '%s'\n", __func__, path);
 
 	if (mknod_dummy && !strcmp(path, mknod_dummy)) {
 		stbuf->st_mode = S_IFREG | 0755;
@@ -210,7 +221,7 @@ static int ofs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 		return -ENOENT;
 	}
 
-	while ((ent = obexftp_readdir(dir)) && *ent->name) {
+	while ((ent = obexftp_readdir(dir)) != NULL) {
 		DEBUG("GETDIR:%s\n", ent->name);
 		stat.st_mode = S_ISDIR(ent->mode) ? DT_DIR : DT_REG;
 		res = filler(h, ent->name, S_ISDIR(ent->mode) ? DT_DIR : DT_REG, 0);
@@ -296,9 +307,9 @@ static int ofs_rename(const char *from, const char *to)
 }
 
 /* needed for overwriting files */
-int ofs_truncate(const char *path, off_t offset)
+int ofs_truncate(const char *UNUSED(path), off_t UNUSED(offset))
 {
-	DEBUG("%s called. This is a dummy!\n", __func__);
+	DEBUG("%s() called. This is a dummy!\n", __func__);
 	return 0;
 }
 
@@ -334,7 +345,7 @@ static int ofs_read(const char *path, char *buf, size_t size, off_t offset, stru
 		(void) obexftp_get(cli, NULL, path);
 		wb->size = cli->buf_size;
 		wb->data = cli->buf_data; /* would be better to memcpy this */
-		//cli->buf_data = NULL; /* no the data is ours -- without copying */
+		//cli->buf_data = NULL; /* now the data is ours -- without copying */
 
 		ofs_disconnect();
 	}
@@ -360,15 +371,16 @@ static int ofs_write(const char *path, const char *buf, size_t size, off_t offse
 	if (offset + size > wb->size)
 		newsize = offset + size;
 	else
-		newsize = size;
+		newsize = wb->size; /* don't change the buffer size */
 	
 	if (!wb->data)
 		wb->data = malloc(newsize);
-	else if (newsize != size)
+	else if (newsize != wb->size)
 		wb->data = realloc(wb->data, newsize);
 	if (!wb->data)
 		return -1;
 	wb->size = newsize;
+	wb->write_mode = 1;
 
 	DEBUG("memcpy to %ld (%ld) from %ld cnt %ld\n", wb->data + offset, wb->data, buf, size);
 	(void) memcpy(&wb->data[offset], buf, size);
@@ -376,6 +388,7 @@ static int ofs_write(const char *path, const char *buf, size_t size, off_t offse
 	return size;
 }
 
+/* careful, this can be a read release or a write release */
 static int ofs_release(const char *path, struct fuse_file_info *fi)
 {
 	data_buffer_t *wb;
@@ -383,7 +396,7 @@ static int ofs_release(const char *path, struct fuse_file_info *fi)
 	
 	wb = (data_buffer_t *)fi->fh;
 	DEBUG("Releasing: %s (%ld)\n", path, wb);
-	if (wb && wb->data) {
+	if (wb && wb->data && wb->write_mode) {
 		DEBUG("Now writing %s for %d (%02x)\n", path, wb->size, wb->data[0]);
 
 		res = ofs_connect();
@@ -422,7 +435,7 @@ static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
 	(void) obexftp_info(cli, 0x02);
 	free = cli->apparam_info;
  
- DEBUG("%s: GOT FS STAT: %d / %d\n", __func__, free, size);
+ DEBUG("%s() GOT FS STAT: %d / %d\n", __func__, free, size);
  
 	(void) obexftp_cli_disconnect (cli);
 	(void) obexftp_cli_connect (cli, btaddr, btchannel);
@@ -486,12 +499,13 @@ int main(int argc, char *argv[])
 			{"bluetooth",	required_argument, NULL, 'b'},
 			{"channel",	required_argument, NULL, 'B'},
 			{"tty",		required_argument, NULL, 't'},
+			{"nonblock",	no_argument, NULL, 'N'},
 			{"help",	no_argument, NULL, 'h'},
 			{"usage",	no_argument, NULL, 'u'},
 			{0, 0, 0, 0}
 		};
 		
-		c = getopt_long (argc, argv, "+ib:B:t:h",
+		c = getopt_long (argc, argv, "+ib:B:t:Nh",
 				 long_options, &option_index);
 		if (c == -1)
 			break;
@@ -523,6 +537,10 @@ int main(int argc, char *argv[])
 			else
 				tty = optarg;
 			break;
+			
+		case 'N':
+			nonblock = 1;
+			break;
 
 		case 'h':
 		case 'u':
@@ -535,6 +553,7 @@ int main(int argc, char *argv[])
 				" -b, --bluetooth <device>    connect to this bluetooth device\n"
 				" -B, --channel <number>      use this bluetooth channel when connecting\n"
 				" -t, --tty <device>          connect to this tty using a custom transport\n\n"
+				" -N, --nonblock              nonblocking mode\n\n"
 				" -h, --help, --usage         this help text\n\n"
 				"Options to fusermount need to be preceeded by two dashes (--).\n"
 				"\n",

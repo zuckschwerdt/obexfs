@@ -1,18 +1,13 @@
 AC_INIT(fuse/obexfs.c)
-AM_INIT_AUTOMAKE(obexfs, 0.3)
+AM_INIT_AUTOMAKE(obexfs, 0.4)
 AM_CONFIG_HEADER(config.h)
 
 AC_PROG_CC
 AC_PROG_RANLIB
 AC_PROG_INSTALL
 
-dnl is this needed?
-if test -z "$LD"; then
-	LD=ld
-fi
-AC_SUBST(LD)
-
-CFLAGS="-Wall -W -g -O2 -D_FILE_OFFSET_BITS=64"
+CFLAGS="-Wall -W -Wmissing-declarations -Wmissing-prototypes"
+CFLAGS="$CFLAGS -O2 -D_FILE_OFFSET_BITS=64"
 
 AC_OUTPUT([Makefile fuse/Makefile])
 

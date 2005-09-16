@@ -1,3 +1,8 @@
+2005-09-15  Christian W. Zuckschwerdt  <zany@triq.net>
+
+	* read/write flag for data buffer
+	* nonblocking mode flag, blocking mode default now
+
 2005-06-13  Christian W. Zuckschwerdt  <zany@triq.net>
 
 	* removed caching
