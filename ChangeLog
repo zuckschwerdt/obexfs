@@ -1,7 +1,12 @@
+2005-09-23  Christian W. Zuckschwerdt  <zany@triq.net>
+
+	* rewrite for multiple devices auto scanning
+
 2005-09-15  Christian W. Zuckschwerdt  <zany@triq.net>
 
 	* read/write flag for data buffer
 	* nonblocking mode flag, blocking mode default now
+	* updated to obexftp 0.10.8 and fuse 2.3
 
 2005-06-13  Christian W. Zuckschwerdt  <zany@triq.net>
 
