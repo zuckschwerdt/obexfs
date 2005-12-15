@@ -46,7 +46,6 @@
 #include <obexftp/obexftp.h>
 #include <obexftp/client.h>
 #include <obexftp/uuid.h>
-#include <cobexbfb/cobex_bfb.h>
 
 #define UNUSED(x) x __attribute__((unused))
 
@@ -79,25 +78,15 @@ static char *mknod_dummy = NULL; /* bad coder, no cookies! */
 static int nodal = 0;
 
 
-static int ofs_cli_open()
+static int cli_open()
 {
-	static obex_ctrans_t *ctrans = NULL;
         int retry;
 
         if (cli != NULL)
                 return 0;
 
-        if (tty != NULL) {
-                /* Custom transport Siemens/Ericsson */
-                ctrans = cobex_ctrans (tty);
-        }
-        else {
-                /* No custom transport */
-                ctrans = NULL;
-        }
-
         /* Open */
-        cli = obexftp_cli_open (transport, ctrans, NULL, NULL);
+        cli = obexftp_open (transport, NULL, NULL, NULL);
         if(cli == NULL) {
                 /* Error opening obexftp-client */
                 return -1;
@@ -106,7 +95,7 @@ static int ofs_cli_open()
         for (retry = 0; retry < 3; retry++) {
 
                 /* Connect */
-                if (obexftp_cli_connect (cli, btaddr, btchannel) >= 0)
+                if (obexftp_connect (cli, btaddr, btchannel) >= 0)
                         return 0;
                 /* Still trying to connect */
 		sleep(1);
@@ -116,13 +105,13 @@ static int ofs_cli_open()
         return -1;
 }
 
-static void ofs_cli_close()
+static void cli_close()
 {
         if (cli != NULL) {
                 /* Disconnect */
-                (void) obexftp_cli_disconnect (cli);
+                (void) obexftp_disconnect (cli);
                 /* Close */
-                obexftp_cli_close (cli);
+                obexftp_close (cli);
         }
 	cli = NULL;
 }
@@ -334,7 +323,7 @@ static int ofs_read(const char *path, char *buf, size_t size, off_t offset, stru
 {
 	data_buffer_t *wb;
 	int res = 0;
-	int actual;
+	size_t actual;
 
 	if(!path || *path != '/')
 		return 0;
@@ -430,8 +419,8 @@ static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
 		return res; /* errno */
 
 	/* for S45 */
-	(void) obexftp_cli_disconnect (cli);
-	(void) obexftp_cli_connect_uuid (cli, btaddr, btchannel, UUID_S45);
+	(void) obexftp_disconnect (cli);
+	(void) obexftp_connect_uuid (cli, btaddr, btchannel, UUID_S45, sizeof(UUID_S45));
  
 	/* Retrieve Infos */
 	(void) obexftp_info(cli, 0x01);
@@ -441,8 +430,8 @@ static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
  
  DEBUG("%s() GOT FS STAT: %d / %d\n", __func__, free, size);
  
-	(void) obexftp_cli_disconnect (cli);
-	(void) obexftp_cli_connect (cli, btaddr, btchannel);
+	(void) obexftp_disconnect (cli);
+	(void) obexftp_connect (cli, btaddr, btchannel);
 
 	ofs_disconnect();
 
@@ -458,14 +447,14 @@ static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
 	return 0;
 }
 
-void *ofs_init(void) {
-	//ofs_cli_open();
+static void *ofs_init(void) {
+	//cli_open();
 	return NULL;
 }
 
-void ofs_destroy(void *private_data) {
+static void ofs_destroy(void *private_data) {
 	fprintf(stderr, "terminating...\n");
-	ofs_cli_close();
+	cli_close();
 	return;
 }
 
@@ -586,7 +575,7 @@ int main(int argc, char *argv[])
 	argv[optind-1] = argv[0];
 
         /* Open connection */
-	res = ofs_cli_open();
+	res = cli_open();
 	if(res < 0)
 		return res; /* errno */
 	
@@ -594,7 +583,7 @@ int main(int argc, char *argv[])
 	fuse_main(argc-optind+1, &argv[optind-1], &ofs_oper);
 	
         /* Close connection */
-	ofs_cli_close();
+	cli_close();
 
 	return 0;
 }

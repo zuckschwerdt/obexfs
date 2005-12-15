@@ -3,7 +3,7 @@
 LDADD =				-lfuse -lpthread \
 				@OPENOBEX_LIBS@ \
 				-lbluetooth \
-				-lobexftp -lcobexbfb -lbfb
+				-lobexftp -lmulticobex -lbfb
 
 obexfs_SOURCES =		obexfs.c
 

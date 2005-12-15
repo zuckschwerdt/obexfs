@@ -1,5 +1,5 @@
 AC_INIT(fuse/obexfs.c)
-AM_INIT_AUTOMAKE(obexfs, 0.5)
+AM_INIT_AUTOMAKE(obexfs, 0.6)
 AM_CONFIG_HEADER(config.h)
 
 AC_PROG_CC

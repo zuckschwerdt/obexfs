@@ -58,7 +58,6 @@
 #include <obexftp/obexftp.h>
 #include <obexftp/client.h>
 #include <obexftp/uuid.h>
-#include <cobexbfb/cobex_bfb.h>
 
 #define UNUSED(x) x __attribute__((unused))
 
@@ -77,6 +76,8 @@ struct connection {
 	char *addr;
 	int channel;
 	obexftp_client_t *cli;
+	int nodal;
+	int recent;
 	connection_t *next;
 };
 
@@ -101,8 +102,8 @@ static int discover_tty(char *port) { return -1; }
 static int discover_bt(void)
 {
 	inquiry_info *info = NULL;
-	bdaddr_t bdaddr, bdswap;
-	char name[248];
+	bdaddr_t bdswap;
+	char name[248], *bastr;
 	int dev_id = 0;
 	int num_rsp = 10;
 	int flags = 0;
@@ -127,31 +128,37 @@ static int discover_bt(void)
 	for(i = 0; i < num_rsp; i++) {
 		memset(name, 0, sizeof(name));
 
-		bacpy(&bdaddr, &(info+i)->bdaddr);
 		baswap(&bdswap, &(info+i)->bdaddr);
+       		bastr = batostr(&bdswap);
 
 		if(hci_read_remote_name(dd, &(info+i)->bdaddr, sizeof(name), name, 10000) < 0) {
-			strcpy(name, batostr(&bdswap));
+			strcpy(name, bastr);
 		}
 
 		for (conn = connections; conn; conn = conn->next) {
-	       		if (!strcmp(conn->alias, name))
+	       		if (!strcmp(conn->addr, bastr)) {
+				conn->recent++;
 				break;
+			}
 		}
 	
 		if (!conn) {
-			DEBUG("Adding\t%s\t%s\n", batostr(&bdswap), name);
+			DEBUG("Adding\t%s\t%s\n", bastr, name);
 			conn = calloc(1, sizeof(connection_t));
 			if (!conn)
 				return -1;
 			conn->alias = strdup(name);
 			conn->transport = OBEX_TRANS_BLUETOOTH;
-			conn->addr = batostr(&bdswap); /* FIXME: do we need strdup? */
-			conn->channel = 5;
-			//conn->cli = ofs_cli_open(OBEX_TRANS_BLUETOOTH, batostr(&bdswap), 5);
+			conn->addr = bastr;
+			conn->channel = 5; // Siemens
+			conn->channel = 10; // Nokia
+			conn->channel = 6; // Sony-Ericsson
+			//conn->cli = cli_open(OBEX_TRANS_BLUETOOTH, batostr(&bdswap), 5);
+       			conn->recent++;
 			conn->next = connections;
 			connections = conn;
-		}
+		} else
+			free(bastr);
 	}
   
 	close(dd);
@@ -160,7 +167,15 @@ static int discover_bt(void)
 	return 0;
 }
 
+
+static void cli_close(obexftp_client_t *cli);
+
 static int discover_devices(void) {
+	connection_t *conn, *prev;
+
+       	for (conn = connections; conn; conn = conn->next)
+		conn->recent = 0;
+
         if (search_irda)
 		discover_irda();
         if (search_bt)
@@ -169,6 +184,32 @@ static int discover_devices(void) {
 		discover_usb();
         if (tty)
 		discover_tty(tty);
+	
+	/* remove from head */
+	while (connections && connections->recent == 0) {
+		fprintf(stderr, "Deleting %s\n", connections->alias);
+       		conn = connections;
+       		connections = conn->next;
+       	
+       		cli_close(conn->cli);
+       		free(conn->alias);
+       		free(conn->addr);
+       		free(conn);
+       	}
+
+	/* remove from body */
+	for (prev = connections; prev; prev = prev->next)
+		if(prev->next && prev->next->recent == 0) {
+		fprintf(stderr, "Deleting2 %s\n", prev->next->alias);
+	       		conn = prev->next;
+       			prev->next = conn->next;
+       	
+       			cli_close(conn->cli);
+	       		free(conn->alias);
+       			free(conn->addr);
+	       		free(conn);
+		}
+	
 	return 0;
 }
  
@@ -183,28 +224,16 @@ struct data_buffer {
 
 static char *mknod_dummy = NULL; /* bad coder, no biscuits! */
 
-static int nodal = 0;
-
 
 /* connection handling operations */
 
-static obexftp_client_t *ofs_cli_open(int transport, char *addr, int channel)
+static obexftp_client_t *cli_open(int transport, char *addr, int channel)
 {
 	obexftp_client_t *cli;
-	obex_ctrans_t *ctrans = NULL;
         int retry;
 
-        if (tty != NULL) {
-                /* Custom transport Siemens/Ericsson */
-                ctrans = cobex_ctrans (tty);
-        }
-        else {
-                /* No custom transport */
-                ctrans = NULL;
-        }
-
         /* Open */
-        cli = obexftp_cli_open (transport, ctrans, NULL, NULL);
+        cli = obexftp_open (transport, NULL, NULL, NULL);
         if(cli == NULL) {
                 /* Error opening obexftp-client */
                 return NULL;
@@ -213,7 +242,7 @@ static obexftp_client_t *ofs_cli_open(int transport, char *addr, int channel)
         for (retry = 0; retry < 3; retry++) {
 
                 /* Connect */
-                if (obexftp_cli_connect (cli, addr, channel) >= 0)
+                if (obexftp_connect (cli, addr, channel) >= 0)
                         return cli;
                 /* Still trying to connect */
 		sleep(1);
@@ -222,29 +251,28 @@ static obexftp_client_t *ofs_cli_open(int transport, char *addr, int channel)
         return NULL;
 }
 
-static void ofs_cli_close(obexftp_client_t *cli)
-{
-        if (cli != NULL) {
-                /* Disconnect */
-                (void) obexftp_cli_disconnect (cli);
-                /* Close */
-                obexftp_cli_close (cli);
-        }
-	cli = NULL;
-}
-
-static int ofs_connect(obexftp_client_t *cli)
+static void cli_close(obexftp_client_t *cli)
 {
 	if (!cli)
-		return -1;
+		return;
+	/* Disconnect */
+	(void) obexftp_disconnect (cli);
+	/* Close */
+	obexftp_close (cli);
+}
+
+static int ofs_connect(connection_t *conn)
+{
+	if (!conn || !conn->cli)
+		return -ENOENT;
 	if (nonblock) {
-		if (++nodal > 1) {
-			nodal--;
+		if (++conn->nodal > 1) {
+			conn->nodal--;
 			return -EBUSY;
 		}
 	} else {
-		while (++nodal > 1) {
-			nodal--;
+		while (++conn->nodal > 1) {
+			conn->nodal--;
 			sleep(1);
 		}
 	}
@@ -252,13 +280,15 @@ static int ofs_connect(obexftp_client_t *cli)
 	return 0;
 }
 
-static void ofs_disconnect(obexftp_client_t *cli)
+static void ofs_disconnect(connection_t *conn)
 {
-	nodal--;
+	if (!conn || !conn->cli)
+		return; /* -ENOENT */
+	conn->nodal--;
 	DEBUG("%s() <<<unblocking>>>\n", __func__);
 }
 
-static obexftp_client_t *ofs_find_connection(const char *path, char **filepath)
+static connection_t *ofs_find_connection(const char *path, char **filepath)
 {
 	int namelen;
 	connection_t *conn;
@@ -278,8 +308,8 @@ static obexftp_client_t *ofs_find_connection(const char *path, char **filepath)
 	for (conn = connections; conn; conn = conn->next) {
         	if (!strncmp(conn->addr, path, namelen) || !strncmp(conn->alias, path, namelen)) {
 			if (!conn->cli)
-				conn->cli = ofs_cli_open(conn->transport, conn->addr, conn->channel);
-			return conn->cli;
+				conn->cli = cli_open(conn->transport, conn->addr, conn->channel);
+			return conn;
 		}
 	}
        	return NULL;
@@ -290,7 +320,7 @@ static obexftp_client_t *ofs_find_connection(const char *path, char **filepath)
 
 static int ofs_getattr(const char *path, struct stat *stbuf)
 {
-	obexftp_client_t *cli;
+	connection_t *conn;
 	char *filepath;
 
 	stat_entry_t *st;
@@ -323,8 +353,8 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 		return 0;
 	}
 
-        cli = ofs_find_connection(path, &filepath);
-	if (!cli)
+        conn = ofs_find_connection(path, &filepath);
+	if (!conn)
 		return -ENOENT;
 	
 	if(!filepath) {
@@ -342,13 +372,13 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 		return 0;
 	}
 	
-	res = ofs_connect(cli);
+	res = ofs_connect(conn);
 	if(res < 0)
 		return res; /* errno */
 	
-	st = obexftp_stat(cli, filepath);
+	st = obexftp_stat(conn->cli, filepath);
 
-	ofs_disconnect(cli);
+	ofs_disconnect(conn);
 	
 	if (!st)
 		return -ENOENT;
@@ -382,9 +412,8 @@ static int ofs_readlink (const char *path, char *link, size_t size)
 
 static int ofs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 {
-	obexftp_client_t *cli;
-	char *filepath;
 	connection_t *conn;
+	char *filepath;
 	
 	DIR *dir;
 	stat_entry_t *ent;
@@ -409,18 +438,18 @@ static int ofs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 		return 0;
 	}
 
-        cli = ofs_find_connection(path, &filepath);
-	if (!cli)
+        conn = ofs_find_connection(path, &filepath);
+	if (!conn)
 		return -1; /* FIXME */
 	
-	res = ofs_connect(cli);
+	res = ofs_connect(conn);
 	if(res < 0)
 		return res; /* errno */
 
-	dir = obexftp_opendir(cli, filepath);
+	dir = obexftp_opendir(conn->cli, filepath);
 	
 	if (!dir) {
-		ofs_disconnect(cli);
+		ofs_disconnect(conn);
 		return -ENOENT;
 	}
 
@@ -433,7 +462,7 @@ static int ofs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 	}
 	obexftp_closedir(dir);
 
-	ofs_disconnect(cli);
+	ofs_disconnect(conn);
 
 	return 0;
 }
@@ -453,48 +482,48 @@ static int ofs_mknod(const char *path, mode_t UNUSED(mode), dev_t UNUSED(dev))
 
 static int ofs_mkdir(const char *path, mode_t UNUSED(mode))
 {
-	obexftp_client_t *cli;
+	connection_t *conn;
 	char *filepath;
 	int res;
 
 	if(!path || *path != '/')
 		return 0;
 
-        cli = ofs_find_connection(path, &filepath);
-	if (!cli)
+        conn = ofs_find_connection(path, &filepath);
+	if (!conn)
 		return -1; /* FIXME */
 
-	res = ofs_connect(cli);
+	res = ofs_connect(conn);
 	if(res < 0)
 		return res; /* errno */
 
-	(void) obexftp_setpath(cli, filepath, 1);
+	(void) obexftp_setpath(conn->cli, filepath, 1);
 
-	ofs_disconnect(cli);
+	ofs_disconnect(conn);
 
 	return 0;
 }
 
 static int ofs_unlink(const char *path)
 {
-	obexftp_client_t *cli;
+	connection_t *conn;
 	char *filepath;
 	int res;
 
 	if(!path || *path != '/')
 		return 0;
 
-        cli = ofs_find_connection(path, &filepath);
-	if (!cli)
+        conn = ofs_find_connection(path, &filepath);
+	if (!conn)
 		return -1; /* FIXME */
 
-	res = ofs_connect(cli);
+	res = ofs_connect(conn);
 	if(res < 0)
 		return res; /* errno */
 
-	(void) obexftp_del(cli, filepath);
+	(void) obexftp_del(conn->cli, filepath);
 
-	ofs_disconnect(cli);
+	ofs_disconnect(conn);
 
 	return 0;
 }
@@ -502,7 +531,7 @@ static int ofs_unlink(const char *path)
 
 static int ofs_rename(const char *from, const char *to)
 {
-	obexftp_client_t *cli;
+	connection_t *conn;
 	char *filepath;
 	int res;
 
@@ -512,17 +541,17 @@ static int ofs_rename(const char *from, const char *to)
 	if(!to || *to != '/')
 		return 0;
 
-        cli = ofs_find_connection(from, &filepath);
-	if (!cli)
+        conn = ofs_find_connection(from, &filepath);
+	if (!conn)
 		return -1; /* FIXME */
 
-	res = ofs_connect(cli);
+	res = ofs_connect(conn);
 	if(res < 0)
 		return res; /* errno */
 
-	(void) obexftp_rename(cli, from, to);
+	(void) obexftp_rename(conn->cli, from, to);
 
-	ofs_disconnect(cli);
+	ofs_disconnect(conn);
 
 	return 0;
 }
@@ -549,11 +578,11 @@ static int ofs_open(const char *UNUSED(path), struct fuse_file_info *fi)
 
 static int ofs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *UNUSED(fi))
 {
-	obexftp_client_t *cli;
+	connection_t *conn;
 	char *filepath;
 	data_buffer_t *wb;
 	int res = 0;
-	int actual;
+	size_t actual;
 
 	if(!path || *path != '/')
 		return 0;
@@ -561,20 +590,20 @@ static int ofs_read(const char *path, char *buf, size_t size, off_t offset, stru
 	wb = (data_buffer_t *)fi->fh;
 	if (!wb->data) {
 
-        	cli = ofs_find_connection(path, &filepath);
-		if (!cli)
+        	conn = ofs_find_connection(path, &filepath);
+		if (!conn)
 			return -1; /* FIXME */
 
-		res = ofs_connect(cli);
+		res = ofs_connect(conn);
 		if(res < 0)
 			return res; /* errno */
 
-		(void) obexftp_get(cli, NULL, filepath);
-		wb->size = cli->buf_size;
-		wb->data = cli->buf_data; /* would be better to memcpy this */
-		//cli->buf_data = NULL; /* now the data is ours -- without copying */
+		(void) obexftp_get(conn->cli, NULL, filepath);
+		wb->size = conn->cli->buf_size;
+		wb->data = conn->cli->buf_data; /* would be better to memcpy this */
+		//conn->cli->buf_data = NULL; /* now the data is ours -- without copying */
 
-		ofs_disconnect(cli);
+		ofs_disconnect(conn);
 	}
 	actual = wb->size - offset;
 	if (actual > size)
@@ -618,7 +647,7 @@ static int ofs_write(const char *path, const char *buf, size_t size, off_t offse
 /* careful, this can be a read release or a write release */
 static int ofs_release(const char *path, struct fuse_file_info *fi)
 {
-	obexftp_client_t *cli;
+	connection_t *conn;
 	char *filepath;
 	data_buffer_t *wb;
 	int res;
@@ -628,17 +657,17 @@ static int ofs_release(const char *path, struct fuse_file_info *fi)
 	if (wb && wb->data && wb->write_mode) {
 		DEBUG("Now writing %s for %d (%02x)\n", path, wb->size, wb->data[0]);
 
-	        cli = ofs_find_connection(path, &filepath);
-		if (!cli)
+	        conn = ofs_find_connection(path, &filepath);
+		if (!conn)
 			return -1; /* FIXME */
 
-		res = ofs_connect(cli);
+		res = ofs_connect(conn);
 		if(res < 0)
 			return res; /* errno */
 
-		(void) obexftp_put_data(cli, wb->data, wb->size, filepath);
+		(void) obexftp_put_data(conn->cli, wb->data, wb->size, filepath);
 
-		ofs_disconnect(cli);
+		ofs_disconnect(conn);
 
 		free(wb->data);
 		free(wb);
@@ -655,11 +684,11 @@ static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
 	int size = 0, free = 0;
 
         for (conn = connections; conn; conn = conn->next)
-		if (conn->cli && ofs_connect(conn->cli) >= 0) {
+		if (conn->cli && ofs_connect(conn) >= 0) {
 
 			/* for S45 */
-			(void) obexftp_cli_disconnect (conn->cli);
-			(void) obexftp_cli_connect_uuid (conn->cli, conn->addr, conn->channel, UUID_S45);
+			(void) obexftp_disconnect (conn->cli);
+			(void) obexftp_connect_uuid (conn->cli, conn->addr, conn->channel, UUID_S45, sizeof(UUID_S45));
  
 			/* Retrieve Infos */
 			(void) obexftp_info(conn->cli, 0x01);
@@ -669,10 +698,10 @@ static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
  
 			 DEBUG("%s() GOT FS STAT: %d / %d\n", __func__, free, size);
  
-			(void) obexftp_cli_disconnect (conn->cli);
-			(void) obexftp_cli_connect (conn->cli, conn->addr, conn->channel);
+			(void) obexftp_disconnect (conn->cli);
+			(void) obexftp_connect (conn->cli, conn->addr, conn->channel);
 
-			ofs_disconnect(conn->cli);
+			ofs_disconnect(conn);
 		}
 
 	memset(st, 0, sizeof(struct statfs));
@@ -691,12 +720,12 @@ static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
 static void *ofs_init(void) {
 
         /* Open connection */
-	//res = ofs_cli_open();
+	//res = cli_open();
 	//if(res < 0)
 	//	return res; /* errno */
 
        	//discover_bt(&alias, &bdaddr, &channel);
-	//ofs_cli_open();
+	//cli_open();
 	return NULL;
 }
 
@@ -705,8 +734,12 @@ static void ofs_destroy(void *private_data) {
 	
 	DEBUG("terminating...\n");
         /* Close connection */
-	for (conn = connections; conn; conn = conn->next)
-		ofs_cli_close(conn->cli);
+	for (conn = connections; conn; conn = conn->next) {
+		cli_close(conn->cli);
+       		free(conn->alias);
+       		free(conn->addr);
+       		free(conn);
+	}
 	return;
 }
 
