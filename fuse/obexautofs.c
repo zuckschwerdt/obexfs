@@ -350,6 +350,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 		stbuf->st_blocks = 0;
 		stbuf->st_atime = stbuf->st_mtime = stbuf->st_ctime = time(NULL);
 		free(mknod_dummy);
+		mknod_dummy = NULL;
 		return 0;
 	}
 
@@ -473,8 +474,10 @@ static int ofs_mknod(const char *path, mode_t UNUSED(mode), dev_t UNUSED(dev))
 	/* check for access */
 	
 	/* create dummy for subsequent stat */
-	if (mknod_dummy)
+	if (mknod_dummy) {
 		free(mknod_dummy);
+		fprintf(stderr, "warning: overlapping mknod calls.\n");
+	}
 	mknod_dummy = strdup(path);
 
 	return 0;
@@ -638,7 +641,7 @@ static int ofs_write(const char *path, const char *buf, size_t size, off_t offse
 	wb->size = newsize;
 	wb->write_mode = 1;
 
-	DEBUG("memcpy to %ld (%ld) from %ld cnt %ld\n", wb->data + offset, wb->data, buf, size);
+	DEBUG("memcpy to %p (%p) from %p cnt %d\n", wb->data + offset, wb->data, buf, size);
 	(void) memcpy(&wb->data[offset], buf, size);
 
 	return size;
@@ -653,7 +656,7 @@ static int ofs_release(const char *path, struct fuse_file_info *fi)
 	int res;
 	
 	wb = (data_buffer_t *)fi->fh;
-	DEBUG("Releasing: %s (%ld)\n", path, wb);
+	DEBUG("Releasing: %s (%p)\n", path, wb);
 	if (wb && wb->data && wb->write_mode) {
 		DEBUG("Now writing %s for %d (%02x)\n", path, wb->size, wb->data[0]);
 
