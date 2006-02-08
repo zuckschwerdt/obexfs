@@ -69,7 +69,7 @@ static obexftp_client_t *cli = NULL;
 static char *tty = NULL; // "/dev/ttyS0";
 static int transport = 0;
 static char *btaddr = NULL; // "00:11:22:33:44:55";
-static int btchannel = 5; // 10;
+static int btchannel = 6; // 10;
 
 static int nonblock = 0;
 
@@ -148,7 +148,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 
 	if(!path || *path == '\0' || !strcmp(path, "/")) {
 		stbuf->st_mode = S_IFDIR | 0755;
-		stbuf->st_nlink = 1;
+		stbuf->st_nlink = 1; /* should be NSUB+2 for dirs */
 		stbuf->st_uid = getuid();
 		stbuf->st_gid = getgid();
 		stbuf->st_size = 0;
@@ -161,7 +161,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 
 	if (mknod_dummy && !strcmp(path, mknod_dummy)) {
 		stbuf->st_mode = S_IFREG | 0755;
-		stbuf->st_nlink = 1;
+		stbuf->st_nlink = 1; /* should be NSUB+2 for dirs */
 		stbuf->st_uid = getuid();
 		stbuf->st_gid = getgid();
 		stbuf->st_size = 0;
@@ -184,7 +184,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 		return -ENOENT;
 
 	stbuf->st_mode = st->mode;
-	stbuf->st_nlink = 1;
+	stbuf->st_nlink = 1; /* should be NSUB+2 for  dirs */
 	stbuf->st_uid = getuid();
 	stbuf->st_gid = getgid();
 	stbuf->st_size = st->size;
@@ -215,6 +215,8 @@ static int ofs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 		return -ENOENT;
 	}
 
+	res = filler(h, ".", DT_DIR, 0);
+	res = filler(h, "..", DT_DIR, 0);
 	while ((ent = obexftp_readdir(dir)) != NULL) {
 		DEBUG("GETDIR:%s\n", ent->name);
 		stat.st_mode = S_ISDIR(ent->mode) ? DT_DIR : DT_REG;

@@ -329,7 +329,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 	if(!path || *path == '\0' || !strcmp(path, "/")) {
 		/* root */
 		stbuf->st_mode = S_IFDIR | 0755;
-		stbuf->st_nlink = 1;
+		stbuf->st_nlink = 1; /* should be NSUB+2 for dirs */
 		stbuf->st_uid = getuid();
 		stbuf->st_gid = getgid();
 		stbuf->st_size = 0;
@@ -343,7 +343,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 	if (mknod_dummy && !strcmp(path, mknod_dummy)) {
 		/* fresh mknod dummy */
 		stbuf->st_mode = S_IFREG | 0755;
-		stbuf->st_nlink = 1;
+		stbuf->st_nlink = 1; /* should be NSUB+2 for dirs */
 		stbuf->st_uid = getuid();
 		stbuf->st_gid = getgid();
 		stbuf->st_size = 0;
@@ -364,7 +364,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 			stbuf->st_mode = S_IFDIR | 0755;
 		else
 			stbuf->st_mode = S_IFLNK | 0777;
-		stbuf->st_nlink = 1;
+		stbuf->st_nlink = 1; /* should be NSUB+2 for dirs */
 		stbuf->st_uid = getuid();
 		stbuf->st_gid = getgid();
 		stbuf->st_size = 0;
@@ -385,7 +385,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 		return -ENOENT;
 
 	stbuf->st_mode = st->mode;
-	stbuf->st_nlink = 1;
+	stbuf->st_nlink = 1; /* should be NSUB+2 for dirs */
 	stbuf->st_uid = getuid();
 	stbuf->st_gid = getgid();
 	stbuf->st_size = st->size;
@@ -429,6 +429,8 @@ static int ofs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 		}
 	
 		DEBUG("listing devices...\n");
+		res = filler(h, ".", DT_DIR, 0);
+		res = filler(h, "..", DT_DIR, 0);
 		for (conn = connections; conn; conn = conn->next) {
 			stat.st_mode = DT_DIR;
 			res = filler(h, conn->alias, DT_LNK, 0);
@@ -454,6 +456,8 @@ static int ofs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 		return -ENOENT;
 	}
 
+	res = filler(h, ".", DT_DIR, 0);
+	res = filler(h, "..", DT_DIR, 0);
 	while ((ent = obexftp_readdir(dir)) != NULL) {
 		DEBUG("GETDIR:%s\n", ent->name);
 		stat.st_mode = S_ISDIR(ent->mode) ? DT_DIR : DT_REG;

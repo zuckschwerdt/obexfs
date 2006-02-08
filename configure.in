@@ -1,12 +1,14 @@
-AC_INIT(fuse/obexfs.c)
-AM_INIT_AUTOMAKE(obexfs, 0.7)
+AC_INIT(ObexFS, 0.8, zany@triq.net)
+#AC_CONFIG_SRCDIR(src/foo.c)
+AM_INIT_AUTOMAKE
 AM_CONFIG_HEADER(config.h)
 
 AC_PROG_CC
 AC_PROG_RANLIB
 AC_PROG_INSTALL
 
-AM_PATH_OPENOBEX(1.0.0)
+PKG_CHECK_MODULES(OPENOBEX,openobex)
+# PKG_CHECK_MODULES(OBEXFTP,obexftp)
 
 CFLAGS="-Wall -W -Wmissing-declarations -Wmissing-prototypes"
 CFLAGS="$CFLAGS -O2 -D_FILE_OFFSET_BITS=64"
