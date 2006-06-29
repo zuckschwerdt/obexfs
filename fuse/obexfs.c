@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include <string.h>
 #include <time.h>
 #include <fcntl.h>
@@ -66,10 +67,9 @@ struct data_buffer {
 
 
 static obexftp_client_t *cli = NULL;
-static char *tty = NULL; // "/dev/ttyS0";
 static int transport = 0;
-static char *btaddr = NULL; // "00:11:22:33:44:55";
-static int btchannel = 6; // 10;
+static char *device = NULL; // "00:11:22:33:44:55"; "/dev/ttyS0";
+static int channel = 6; // 10;
 
 static int nonblock = 0;
 
@@ -95,7 +95,7 @@ static int cli_open()
         for (retry = 0; retry < 3; retry++) {
 
                 /* Connect */
-                if (obexftp_connect (cli, btaddr, btchannel) >= 0)
+                if (obexftp_connect (cli, device, channel) >= 0)
                         return 0;
                 /* Still trying to connect */
 		sleep(1);
@@ -350,7 +350,7 @@ static int ofs_read(const char *path, char *buf, size_t size, off_t offset, stru
 	actual = wb->size - offset;
 	if (actual > size)
 		actual = size;
-	DEBUG("reading %s at %lld for %d (peek: %02x\n", path, offset, actual, wb->data[offset]);
+	DEBUG("reading %s at %" PRId64 " for %d (peek: %02x\n", path, offset, actual, wb->data[offset]);
 	memcpy(buf, wb->data + offset, actual);
 
 	return actual;
@@ -360,7 +360,7 @@ static int ofs_write(const char *path, const char *buf, size_t size, off_t offse
 {
 	data_buffer_t *wb;
 	size_t newsize;
-	DEBUG("Writing %s at %lld for %d\n", path, offset, size);
+	DEBUG("Writing %s at %" PRId64 " for %d\n", path, offset, size);
 	wb = (data_buffer_t *)fi->fh;
 
 	if (!wb)
@@ -380,7 +380,7 @@ static int ofs_write(const char *path, const char *buf, size_t size, off_t offse
 	wb->size = newsize;
 	wb->write_mode = 1;
 
-	DEBUG("memcpy to %p (%p) from %p cnt %d\n", wb->data + offset, wb->data, buf, size);
+	DEBUG("memcpy to %p (%p) from %p cnt %zu\n", wb->data + offset, wb->data, buf, size);
 	(void) memcpy(&wb->data[offset], buf, size);
 
 	return size;
@@ -395,7 +395,7 @@ static int ofs_release(const char *path, struct fuse_file_info *fi)
 	wb = (data_buffer_t *)fi->fh;
 	DEBUG("Releasing: %s (%p)\n", path, wb);
 	if (wb && wb->data && wb->write_mode) {
-		DEBUG("Now writing %s for %d (%02x)\n", path, wb->size, wb->data[0]);
+		DEBUG("Now writing %s for %zu (%02x)\n", path, wb->size, wb->data[0]);
 
 		res = ofs_connect();
 		if(res < 0)
@@ -425,7 +425,7 @@ static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
 
 	/* for S45 */
 	(void) obexftp_disconnect (cli);
-	(void) obexftp_connect_uuid (cli, btaddr, btchannel, UUID_S45, sizeof(UUID_S45));
+	(void) obexftp_connect_uuid (cli, device, channel, UUID_S45, sizeof(UUID_S45));
  
 	/* Retrieve Infos */
 	(void) obexftp_info(cli, 0x01);
@@ -436,7 +436,7 @@ static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
  DEBUG("%s() GOT FS STAT: %d / %d\n", __func__, free, size);
  
 	(void) obexftp_disconnect (cli);
-	(void) obexftp_connect (cli, btaddr, btchannel);
+	(void) obexftp_connect (cli, device, channel);
 
 	ofs_disconnect();
 
@@ -457,7 +457,7 @@ static void *ofs_init(void) {
 	return NULL;
 }
 
-static void ofs_destroy(void *private_data) {
+static void ofs_destroy(void *UNUSED(private_data)) {
 	fprintf(stderr, "terminating...\n");
 	cli_close();
 	return;
@@ -503,14 +503,16 @@ int main(int argc, char *argv[])
 			{"irda",	no_argument, NULL, 'i'},
 			{"bluetooth",	required_argument, NULL, 'b'},
 			{"channel",	required_argument, NULL, 'B'},
+			{"usb",		required_argument, NULL, 'u'},
 			{"tty",		required_argument, NULL, 't'},
+			{"network",	required_argument, NULL, 'n'},
 			{"nonblock",	no_argument, NULL, 'N'},
 			{"help",	no_argument, NULL, 'h'},
 			{"usage",	no_argument, NULL, 'h'},
 			{0, 0, 0, 0}
 		};
 		
-		c = getopt_long (argc, argv, "+ib:B:t:Nh",
+		c = getopt_long (argc, argv, "+ib:B:u:t:n:Nh",
 				 long_options, &option_index);
 		if (c == -1)
 			break;
@@ -519,27 +521,55 @@ int main(int argc, char *argv[])
 		
 		case 'i':
 			transport = OBEX_TRANS_IRDA;
+			if (device != NULL)
+				free(device);
+			device = NULL;
+			channel = 0;
 			break;
 		
 		case 'b':
 			transport = OBEX_TRANS_BLUETOOTH;
-			if (btaddr != NULL)
-				free (btaddr);
-       			btaddr = optarg;
+			if (device != NULL)
+				free (device);
+       			device = optarg;
 			break;
 			
 		case 'B':
-			btchannel = atoi(optarg);
+			channel = atoi(optarg);
+			break;
+			
+		case 'u':
+			if (geteuid() != 0)
+				fprintf(stderr, "If USB doesn't work setup permissions in udev or run as superuser.\n");
+			transport = OBEX_TRANS_USB;
+			if (device != NULL)
+				free(device);
+			device = NULL;
+			channel = atoi(optarg);
 			break;
 		
 		case 't':
 			transport = OBEX_TRANS_CUSTOM;
-			if (tty != NULL)
-				free (tty);
-			tty = NULL;
+			if (device != NULL)
+				free(device);
+			device = NULL;
+			channel = 0;
 
 			if (strcasecmp(optarg, "irda"))
-				tty = optarg;
+				device = optarg;
+			break;
+			
+		case 'n':
+			transport = OBEX_TRANS_INET;
+			if (device != NULL)
+				free(device);
+			device = optarg;
+			channel = 650;
+			{
+                                int n;
+                                if (sscanf(optarg, "%d.%d.%d.%d", &n, &n, &n, &n) != 4)
+                                        fprintf(stderr, "Please use dotted quad notation.\n");
+                        }
 			break;
 			
 		case 'N':
@@ -555,7 +585,9 @@ int main(int argc, char *argv[])
 				" -i, --irda                  connect using IrDA transport\n"
 				" -b, --bluetooth <device>    connect to this bluetooth device\n"
 				" -B, --channel <number>      use this bluetooth channel when connecting\n"
-				" -t, --tty <device>          connect to this tty using a custom transport\n\n"
+				" -u, --usb <interface>       connect to this usb interface number\n"
+				" -t, --tty <device>          connect to this tty using a custom transport\n"
+				" -n, --network <device>      connect to this network host\n\n"
 				" -N, --nonblock              nonblocking mode\n\n"
 				" -h, --help, --usage         this help text\n\n"
 				"Options to fusermount need to be preceeded by two dashes (--).\n"

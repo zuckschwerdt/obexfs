@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include <string.h>
 #include <time.h>
 #include <fcntl.h>
@@ -97,7 +98,7 @@ static int discover_irda(void) { return -1; }
 
 static int discover_usb(void) { return -1; }
 
-static int discover_tty(char *port) { return -1; }
+static int discover_tty(char *UNUSED(port)) { return -1; }
 
 static int discover_bt(void)
 {
@@ -398,7 +399,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 	return 0;
 }
 
-static int ofs_readlink (const char *path, char *link, size_t size)
+static int ofs_readlink (const char *path, char *link, size_t UNUSED(size))
 {
 	connection_t *conn;
 
@@ -615,7 +616,7 @@ static int ofs_read(const char *path, char *buf, size_t size, off_t offset, stru
 	actual = wb->size - offset;
 	if (actual > size)
 		actual = size;
-	DEBUG("reading %s at %lld for %d (peek: %02x\n", path, offset, actual, wb->data[offset]);
+	DEBUG("reading %s at %" PRId64 " for %d (peek: %02x\n", path, offset, actual, wb->data[offset]);
 	memcpy(buf, wb->data + offset, actual);
 
 	return actual;
@@ -625,7 +626,7 @@ static int ofs_write(const char *path, const char *buf, size_t size, off_t offse
 {
 	data_buffer_t *wb;
 	size_t newsize;
-	DEBUG("Writing %s at %lld for %d\n", path, offset, size);
+	DEBUG("Writing %s at %" PRId64 " for %d\n", path, offset, size);
 	wb = (data_buffer_t *)fi->fh;
 
 	if (!wb)
@@ -645,7 +646,7 @@ static int ofs_write(const char *path, const char *buf, size_t size, off_t offse
 	wb->size = newsize;
 	wb->write_mode = 1;
 
-	DEBUG("memcpy to %p (%p) from %p cnt %d\n", wb->data + offset, wb->data, buf, size);
+	DEBUG("memcpy to %p (%p) from %p cnt %zu\n", wb->data + offset, wb->data, buf, size);
 	(void) memcpy(&wb->data[offset], buf, size);
 
 	return size;
@@ -662,7 +663,7 @@ static int ofs_release(const char *path, struct fuse_file_info *fi)
 	wb = (data_buffer_t *)fi->fh;
 	DEBUG("Releasing: %s (%p)\n", path, wb);
 	if (wb && wb->data && wb->write_mode) {
-		DEBUG("Now writing %s for %d (%02x)\n", path, wb->size, wb->data[0]);
+		DEBUG("Now writing %s for %zu (%02x)\n", path, wb->size, wb->data[0]);
 
 	        conn = ofs_find_connection(path, &filepath);
 		if (!conn)
@@ -687,7 +688,6 @@ static int ofs_release(const char *path, struct fuse_file_info *fi)
 static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
 {
 	connection_t *conn;
-	int res;
 	int size = 0, free = 0;
 
         for (conn = connections; conn; conn = conn->next)
@@ -736,7 +736,7 @@ static void *ofs_init(void) {
 	return NULL;
 }
 
-static void ofs_destroy(void *private_data) {
+static void ofs_destroy(void *UNUSED(private_data)) {
 	connection_t *conn;
 	
 	DEBUG("terminating...\n");
@@ -784,8 +784,6 @@ static struct fuse_operations ofs_oper = {
 
 int main(int argc, char *argv[])
 {
-	int res;
-	
 	while (1) {
 		int option_index = 0;
 		int c;
