@@ -1,7 +1,8 @@
 /*
  *  obexfs.c: FUSE Filesystem to access OBEX
+ *  This is just a wrapper. ObexFTP API does the real work.
  *
- *  Copyright (c) 2003-2005 Christian W. Zuckschwerdt <zany@triq.net>
+ *  Copyright (c) 2003-2006 Christian W. Zuckschwerdt <zany@triq.net>
  *
  *  This program is free software; you can redistribute it and/or modify it
  *  under the terms of the GNU General Public License as published by the Free
@@ -17,10 +18,6 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *     
- */
-/*
- * Created at:    2003-01-05
- * This is just a wrapper. ObexFTP API does the real work.
  */
 
 /* strndup */
@@ -350,7 +347,7 @@ static int ofs_read(const char *path, char *buf, size_t size, off_t offset, stru
 	actual = wb->size - offset;
 	if (actual > size)
 		actual = size;
-	DEBUG("reading %s at %" PRId64 " for %d (peek: %02x\n", path, offset, actual, wb->data[offset]);
+	DEBUG("reading %s at %" PRId64 " for %zu (peek: %02x\n", path, offset, actual, wb->data[offset]);
 	memcpy(buf, wb->data + offset, actual);
 
 	return actual;
@@ -360,7 +357,7 @@ static int ofs_write(const char *path, const char *buf, size_t size, off_t offse
 {
 	data_buffer_t *wb;
 	size_t newsize;
-	DEBUG("Writing %s at %" PRId64 " for %d\n", path, offset, size);
+	DEBUG("Writing %s at %" PRId64 " for %zu\n", path, offset, size);
 	wb = (data_buffer_t *)fi->fh;
 
 	if (!wb)
@@ -412,6 +409,7 @@ static int ofs_release(const char *path, struct fuse_file_info *fi)
 	return 0;
 }
 
+#ifdef SIEMENS
 static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
 {
 	int res;
@@ -451,6 +449,7 @@ static int ofs_statfs(const char *UNUSED(label), struct statfs *st)
 
 	return 0;
 }
+#endif
 
 static void *ofs_init(void) {
 	//cli_open();
@@ -484,7 +483,9 @@ static struct fuse_operations ofs_oper = {
 	open:		ofs_open,
 	read:		ofs_read,
 	write:		ofs_write,
+#ifdef SIEMENS
 	statfs:		ofs_statfs,
+#endif
 	release:	ofs_release,
 	flush:		NULL,
 	fsync:		NULL,
