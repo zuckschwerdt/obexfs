@@ -522,16 +522,12 @@ int main(int argc, char *argv[])
 		
 		case 'i':
 			transport = OBEX_TRANS_IRDA;
-			if (device != NULL)
-				free(device);
 			device = NULL;
 			channel = 0;
 			break;
 		
 		case 'b':
 			transport = OBEX_TRANS_BLUETOOTH;
-			if (device != NULL)
-				free (device);
        			device = optarg;
 			break;
 			
@@ -543,27 +539,19 @@ int main(int argc, char *argv[])
 			if (geteuid() != 0)
 				fprintf(stderr, "If USB doesn't work setup permissions in udev or run as superuser.\n");
 			transport = OBEX_TRANS_USB;
-			if (device != NULL)
-				free(device);
 			device = NULL;
 			channel = atoi(optarg);
 			break;
 		
 		case 't':
 			transport = OBEX_TRANS_CUSTOM;
-			if (device != NULL)
-				free(device);
-			device = NULL;
+       			device = optarg;
 			channel = 0;
 
-			if (strcasecmp(optarg, "irda"))
-				device = optarg;
 			break;
 			
 		case 'n':
 			transport = OBEX_TRANS_INET;
-			if (device != NULL)
-				free(device);
 			device = optarg;
 			channel = 650;
 			{
