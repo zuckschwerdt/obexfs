@@ -66,7 +66,7 @@ struct data_buffer {
 static obexftp_client_t *cli = NULL;
 static int transport = 0;
 static char *device = NULL; // "00:11:22:33:44:55"; "/dev/ttyS0";
-static int channel = 6; // 10;
+static int channel = -1;
 
 static int nonblock = 0;
 
@@ -88,6 +88,10 @@ static int cli_open()
                 /* Error opening obexftp-client */
                 return -1;
         }
+
+	if (channel < 0) {
+		channel = obexftp_browse_bt_ftp(device);
+	}
 
         for (retry = 0; retry < 3; retry++) {
 
@@ -528,7 +532,8 @@ int main(int argc, char *argv[])
 		
 		case 'b':
 			transport = OBEX_TRANS_BLUETOOTH;
-       			device = optarg;
+			device = optarg;
+			channel = -1;
 			break;
 			
 		case 'B':
@@ -545,9 +550,8 @@ int main(int argc, char *argv[])
 		
 		case 't':
 			transport = OBEX_TRANS_CUSTOM;
-       			device = optarg;
+			device = optarg;
 			channel = 0;
-
 			break;
 			
 		case 'n':
