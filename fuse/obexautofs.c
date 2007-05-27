@@ -148,9 +148,7 @@ static int discover_bt(void)
 			conn->alias = strdup(name);
 			conn->transport = OBEX_TRANS_BLUETOOTH;
 			conn->addr = bastr;
-			conn->channel = 5; // Siemens
-			conn->channel = 10; // Nokia
-			conn->channel = 6; // Sony-Ericsson
+			conn->channel = obexftp_browse_bt_ftp(conn->addr);
 			//conn->cli = cli_open(OBEX_TRANS_BLUETOOTH, batostr(&bdswap), 5);
        			conn->recent++;
 			conn->next = connections;
