@@ -1,9 +1,9 @@
 ## Process this file with automake to produce Makefile.in
 
 LDADD =				-lfuse -lpthread \
-				@OPENOBEX_LIBS@ \
+				-lobexftp -lmulticobex -lbfb \
 				-lbluetooth \
-				-lobexftp -lmulticobex -lbfb
+				@OPENOBEX_LIBS@
 
 obexfs_SOURCES =		obexfs.c
 
