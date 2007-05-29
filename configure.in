@@ -10,8 +10,4 @@ AC_PROG_INSTALL
 PKG_CHECK_MODULES(OPENOBEX,openobex)
 # PKG_CHECK_MODULES(OBEXFTP,obexftp)
 
-CFLAGS="-Wall -W -Wmissing-declarations -Wmissing-prototypes"
-CFLAGS="$CFLAGS -O2 -D_FILE_OFFSET_BITS=64"
-
 AC_OUTPUT([Makefile fuse/Makefile])
-
