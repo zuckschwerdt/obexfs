@@ -93,7 +93,46 @@ static int nonblock = 0;
 
 static int discover_irda(void) { return -1; }
 
-static int discover_usb(void) { return -1; }
+static int discover_usb(void) {
+	char **devices, **dev;
+	char name[25], *p;
+	connection_t *conn;
+
+	DEBUG("Scanning USB...\n");
+	devices = obexftp_discover(OBEX_TRANS_USB);
+
+	for(dev = devices; *dev; dev++) {
+		strcpy(name, "usb");
+		strncpy(&name[3], *dev, sizeof(name)-4);
+		p = strchr(name, ' ');
+		if (p)
+			*p = '\0';
+       		DEBUG("Found %s (%d), %s\n", name, atoi(*dev), *dev);
+
+		for (conn = connections; conn; conn = conn->next) {
+	       		if (!strcmp(conn->addr, name)) {
+				conn->recent++;
+				break;
+			}
+		}
+	
+		if (!conn) {
+			DEBUG("Adding %s\n", name);
+			conn = calloc(1, sizeof(connection_t));
+			if (!conn)
+				return -1;
+			conn->alias = NULL;
+			conn->transport = OBEX_TRANS_USB;
+			conn->addr = strdup(name);
+			conn->channel = atoi(*dev);
+			//conn->cli = cli_open(OBEX_TRANS_USB, NULL, conn->channel);
+       			conn->recent++;
+			conn->next = connections;
+			connections = conn;
+		}
+	}
+	return 0;
+}
 
 static int discover_tty(char *UNUSED(port)) { return -1; }
 
@@ -183,12 +222,13 @@ static int discover_devices(void) {
 	
 	/* remove from head */
 	while (connections && connections->recent == 0) {
-		fprintf(stderr, "Deleting %s\n", connections->alias);
+		DEBUG("Deleting %s\n", connections->addr);
        		conn = connections;
        		connections = conn->next;
        	
        		cli_close(conn->cli);
-       		free(conn->alias);
+		if (conn->alias)
+	       		free(conn->alias);
        		free(conn->addr);
        		free(conn);
        	}
@@ -196,12 +236,13 @@ static int discover_devices(void) {
 	/* remove from body */
 	for (prev = connections; prev; prev = prev->next)
 		if(prev->next && prev->next->recent == 0) {
-		fprintf(stderr, "Deleting2 %s\n", prev->next->alias);
+		DEBUG("Deleting2 %s\n", prev->next->addr);
 	       		conn = prev->next;
        			prev->next = conn->next;
        	
        			cli_close(conn->cli);
-	       		free(conn->alias);
+			if (conn->alias)
+	       			free(conn->alias);
        			free(conn->addr);
 	       		free(conn);
 		}
@@ -302,7 +343,7 @@ static connection_t *ofs_find_connection(const char *path, char **filepath)
 		namelen = strlen(path);
 	
 	for (conn = connections; conn; conn = conn->next) {
-        	if (!strncmp(conn->addr, path, namelen) || !strncmp(conn->alias, path, namelen)) {
+        	if (!strncmp(conn->addr, path, namelen) || (conn->alias && !strncmp(conn->alias, path, namelen))) {
 			if (!conn->cli)
 				conn->cli = cli_open(conn->transport, conn->addr, conn->channel);
 			return conn;
@@ -356,7 +397,7 @@ static int ofs_getattr(const char *path, struct stat *stbuf)
 	
 	if(!filepath) {
 		/* the device entry itself */
-		if (strchr(path, ':'))
+		if (!strcmp(path + 1, conn->addr))
 			stbuf->st_mode = S_IFDIR | 0755;
 		else
 			stbuf->st_mode = S_IFLNK | 0777;
@@ -399,7 +440,7 @@ static int ofs_readlink (const char *path, char *link, size_t UNUSED(size))
 	connection_t *conn;
 
 	for (conn = connections; conn; conn = conn->next) {
-		if(!strcmp(conn->alias, path + 1)) {
+		if(conn->alias && !strcmp(conn->alias, path + 1)) {
 			strcpy(link, conn->addr);
 			return 0;
 		}
@@ -429,7 +470,8 @@ static int ofs_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler)
 		res = filler(h, "..", DT_DIR, 0);
 		for (conn = connections; conn; conn = conn->next) {
 			stat.st_mode = DT_DIR;
-			res = filler(h, conn->alias, DT_LNK, 0);
+			if (conn->alias)
+				res = filler(h, conn->alias, DT_LNK, 0);
 			res = filler(h, conn->addr, DT_DIR, 0);
 			if(res != 0)
 				break;
@@ -740,7 +782,8 @@ static void ofs_destroy(void *UNUSED(private_data)) {
         /* Close connection */
 	for (conn = connections; conn; conn = conn->next) {
 		cli_close(conn->cli);
-       		free(conn->alias);
+		if (conn->alias)
+       			free(conn->alias);
        		free(conn->addr);
        		free(conn);
 	}
