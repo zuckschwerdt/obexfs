@@ -5,8 +5,8 @@ AM_CFLAGS = -Wall -W -Wmissing-declarations -Wmissing-prototypes \
 
 LDADD =				-lfuse -lpthread \
 				-lobexftp -lmulticobex -lbfb \
-				-lbluetooth \
-				@OPENOBEX_LIBS@
+				@OPENOBEX_LIBS@ \
+				-lbluetooth
 
 obexfs_SOURCES =		obexfs.c
 
