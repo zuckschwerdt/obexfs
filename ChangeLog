@@ -1,3 +1,11 @@
+2007-09-05  Christian W. Zuckschwerdt  <zany@triq.net>
+
+	* Switching ObexFTP to pkg-config
+
+2007-07-12  Christian W. Zuckschwerdt  <zany@triq.net>
+
+	* Switching FUSE to pkg-config
+
 2007-05-30  Christian W. Zuckschwerdt  <zany@triq.net>
 
 	* Added USB discovery
