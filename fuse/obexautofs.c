@@ -46,10 +46,6 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-
 #include <obexftp/obexftp.h>
 #include <obexftp/client.h>
 #include <obexftp/uuid.h>
@@ -135,67 +131,45 @@ static int discover_tty(char *UNUSED(port)) { return -1; }
 
 static int discover_bt(void)
 {
-	inquiry_info *info = NULL;
-	bdaddr_t bdswap;
-	char name[248], *bastr;
-	int dev_id = 0;
-	int num_rsp = 10;
-	int flags = 0;
-	int length = 8;
-	int dd, i;
+	char *hci = NULL;
+	char **devs, **dev, *name;
 	connection_t *conn;
 
 	DEBUG("Scanning ...\n");
-	num_rsp = hci_inquiry(dev_id, length, num_rsp, NULL, &info, flags);
+	devs = obexftp_discover_bt_src(hci);
 
-	if(num_rsp < 0) {
+	if(!devs) {
 		perror("Inquiry failed.");
 		return -1;
 	}
-
-	if ((dd = hci_open_dev(dev_id)) < 0) {
-		perror("HCI device open failed");
-		free(info);
-		return -1;
-	}
   
-	for(i = 0; i < num_rsp; i++) {
-		memset(name, 0, sizeof(name));
-
-		baswap(&bdswap, &(info+i)->bdaddr);
-       		bastr = batostr(&bdswap);
-
-		if(hci_read_remote_name(dd, &(info+i)->bdaddr, sizeof(name), name, 10000) < 0) {
-			strcpy(name, bastr);
-		}
-
+	for(dev = devs; dev && *dev; dev++) {
 		for (conn = connections; conn; conn = conn->next) {
-	       		if (!strcmp(conn->addr, bastr)) {
+	       		if (!strcmp(conn->addr, *dev)) {
 				conn->recent++;
 				break;
 			}
 		}
 	
 		if (!conn) {
-			DEBUG("Adding\t%s\t%s\n", bastr, name);
+			name = obexftp_bt_name_src(*dev, hci);
+			DEBUG("Adding\t%s\t%s\n", *dev, name);
 			conn = calloc(1, sizeof(connection_t));
 			if (!conn)
 				return -1;
-			conn->alias = strdup(name);
+			conn->alias = name;
 			conn->transport = OBEX_TRANS_BLUETOOTH;
-			conn->addr = bastr;
+			conn->addr = *dev;
 			conn->channel = obexftp_browse_bt_ftp(conn->addr);
-			//conn->cli = cli_open(OBEX_TRANS_BLUETOOTH, batostr(&bdswap), 5);
+			//conn->cli = cli_open(OBEX_TRANS_BLUETOOTH, conn->addr, conn->channel);
        			conn->recent++;
 			conn->next = connections;
 			connections = conn;
 		} else
-			free(bastr);
+			free(*dev);
 	}
   
-	close(dd);
-	free(info);
-  
+	free(devs);
 	return 0;
 }
 

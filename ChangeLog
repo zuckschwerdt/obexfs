@@ -1,5 +1,6 @@
 2007-09-05  Christian W. Zuckschwerdt  <zany@triq.net>
 
+	* Removing Bluez dependency
 	* Switching ObexFTP to pkg-config
 
 2007-07-12  Christian W. Zuckschwerdt  <zany@triq.net>
