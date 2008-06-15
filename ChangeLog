@@ -1,3 +1,6 @@
+ObexFS 0.11 (released 2008-06-15)
+---------------------------------
+
 2007-09-05  Christian W. Zuckschwerdt  <zany@triq.net>
 
 	* Removing Bluez dependency
@@ -19,9 +22,17 @@
 
 	* Added automatic bt channel selection
 
+
+ObexFS 0.10 (released 2006-07-04)
+---------------------------------
+
 2006-07-03  Christian W. Zuckschwerdt  <zany@triq.net>
 
 	* Removed statfs (caused problems on all but Siemens)
+
+
+ObexFS 0.9 (released 2006-06-29)
+--------------------------------
 
 2006-06-12  Christian W. Zuckschwerdt  <zany@triq.net>
 
@@ -32,9 +43,29 @@
 	* added usb support (Stanislav Nikolov)
 	* device/channel code cleanup
 
+
+ObexFS 0.8 (released 2006-02-08)
+--------------------------------
+
+
+ObexFS 0.7 (released 2006-01-18)
+--------------------------------
+
+
+ObexFS 0.6 (released 2005-12-15)
+--------------------------------
+
+
+ObexFS 0.5 (released 2005-09-23)
+--------------------------------
+
 2005-09-23  Christian W. Zuckschwerdt  <zany@triq.net>
 
 	* rewrite for multiple devices auto scanning
+
+
+ObexFS 0.4 (released 2005-09-16)
+--------------------------------
 
 2005-09-15  Christian W. Zuckschwerdt  <zany@triq.net>
 
@@ -42,9 +73,21 @@
 	* nonblocking mode flag, blocking mode default now
 	* updated to obexftp 0.10.8 and fuse 2.3
 
+
+ObexFS 0.3 (released 2005-06-19)
+--------------------------------
+
 2005-06-13  Christian W. Zuckschwerdt  <zany@triq.net>
 
 	* removed caching
 	* implemented file writing support
 	* updated to obexftp 0.10.3 and fuse 2.2
+
+
+ObexFS 0.2 (released 2004-01-15)
+--------------------------------
+
+
+ObexFS 0.1 (released 2003-01-05)
+--------------------------------
 
