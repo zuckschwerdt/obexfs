@@ -1,3 +1,11 @@
+ObexFS 0.12 (released 2009-04-26)
+---------------------------------
+
+2009-04-26  Christian W. Zuckschwerdt  <zany@triq.net>
+
+	* Added an option for source hci selection
+
+
 ObexFS 0.11 (released 2008-06-15)
 ---------------------------------
 

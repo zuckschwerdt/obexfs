@@ -1,4 +1,4 @@
-AC_INIT(ObexFS, 0.11, zany@triq.net)
+AC_INIT(ObexFS, 0.12, zany@triq.net)
 #AC_CONFIG_SRCDIR(src/foo.c)
 AM_INIT_AUTOMAKE
 AM_CONFIG_HEADER(config.h)
