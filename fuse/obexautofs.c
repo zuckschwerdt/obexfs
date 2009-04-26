@@ -78,6 +78,7 @@ static connection_t *connections;
 
 
 static char *tty = NULL; // "/dev/ttyS0";
+static char *source = NULL; // "00:11:22:33:44:55"; "hci0";
 static int search_irda = 1;
 static int search_bt = 1;
 static int search_usb = 1;
@@ -250,7 +251,7 @@ static obexftp_client_t *cli_open(int transport, char *addr, int channel)
         for (retry = 0; retry < 3; retry++) {
 
                 /* Connect */
-                if (obexftp_connect (cli, addr, channel) >= 0)
+                if (obexftp_connect_src (cli, source, addr, channel, UUID_FBS, sizeof(UUID_FBS)) >= 0)
                         return cli;
                 /* Still trying to connect */
 		sleep(1);
@@ -805,13 +806,14 @@ int main(int argc, char *argv[])
 			{"nobluetooth",	no_argument, NULL, 'B'},
 			{"nousb",	no_argument, NULL, 'U'},
 			{"tty",		required_argument, NULL, 't'},
+			{"hci", required_argument, NULL, 'd'},
 			{"nonblock",	no_argument, NULL, 'N'},
 			{"help",	no_argument, NULL, 'h'},
 			{"usage",	no_argument, NULL, 'h'},
 			{0, 0, 0, 0}
 		};
 		
-		c = getopt_long (argc, argv, "+IBUt:Nh",
+		c = getopt_long (argc, argv, "+IBUt:d:Nh",
 				 long_options, &option_index);
 		if (c == -1)
 			break;
@@ -838,6 +840,10 @@ int main(int argc, char *argv[])
 			if (strcasecmp(optarg, "irda"))
 				tty = optarg;
 			break;
+
+		case 'd':
+			source = optarg;
+			break;
 			
 		case 'N':
 			nonblock = 1;
@@ -845,7 +851,7 @@ int main(int argc, char *argv[])
 
 		case 'h':
 			/* printf("ObexFS %s\n", VERSION); */
-			printf("Usage: %s [-I] [-B] [-U] [-t <dev>] [-N] [-- <fuse options>]\n"
+			printf("Usage: %s [-I] [-B] [-U] [-t <dev>] [-d <hci>] [-N] [-- <fuse options>]\n"
 				"Transfer files from/to Mobile Equipment.\n"
 				"Copyright (c) 2002-2005 Christian W. Zuckschwerdt\n"
 				"\n"
@@ -853,6 +859,7 @@ int main(int argc, char *argv[])
 				" -B, --nobluetooth           dont search for bluetooth devices\n"
 				" -U, --nousb                 dont search for usb devices\n"
 				" -t, --tty <device>          search for devices at this tty\n\n"
+				" -d, --hci <no/address>      use only this source device address or number\n"				
 				" -N, --nonblock              nonblocking mode\n\n"
 				" -h, --help, --usage         this help text\n\n"
 				"Options to fusermount need to be preceeded by two dashes (--).\n"

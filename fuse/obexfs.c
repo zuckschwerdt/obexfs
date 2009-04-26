@@ -65,6 +65,7 @@ struct data_buffer {
 
 static obexftp_client_t *cli = NULL;
 static int transport = 0;
+static char *source = NULL; // "00:11:22:33:44:55"; "hci0";
 static char *device = NULL; // "00:11:22:33:44:55"; "/dev/ttyS0";
 static int channel = -1;
 
@@ -96,7 +97,7 @@ static int cli_open()
         for (retry = 0; retry < 3; retry++) {
 
                 /* Connect */
-                if (obexftp_connect (cli, device, channel) >= 0)
+                if (obexftp_connect_src (cli, source, device, channel, UUID_FBS, sizeof(UUID_FBS)) >= 0)
                         return 0;
                 /* Still trying to connect */
 		sleep(1);
@@ -508,6 +509,7 @@ int main(int argc, char *argv[])
 			{"irda",	no_argument, NULL, 'i'},
 			{"bluetooth",	required_argument, NULL, 'b'},
 			{"channel",	required_argument, NULL, 'B'},
+			{"hci",	required_argument, NULL, 'd'},
 			{"usb",		required_argument, NULL, 'u'},
 			{"tty",		required_argument, NULL, 't'},
 			{"network",	required_argument, NULL, 'n'},
@@ -517,7 +519,7 @@ int main(int argc, char *argv[])
 			{0, 0, 0, 0}
 		};
 		
-		c = getopt_long (argc, argv, "+ib:B:u:t:n:Nh",
+		c = getopt_long (argc, argv, "+ib:B:d:u:t:n:Nh",
 				 long_options, &option_index);
 		if (c == -1)
 			break;
@@ -538,6 +540,10 @@ int main(int argc, char *argv[])
 			
 		case 'B':
 			channel = atoi(optarg);
+			break;
+
+		case 'd':
+			source = optarg;
 			break;
 			
 		case 'u':
@@ -571,13 +577,14 @@ int main(int argc, char *argv[])
 
 		case 'h':
 			/* printf("ObexFS %s\n", VERSION); */
-			printf("Usage: %s [-i | -b <dev> [-B <chan>] | -t <dev>] [-- <fuse options>]\n"
+			printf("Usage: %s [-i | -b <dev> [-B <chan>] [-d <hci>] | -u <dev> | -t <dev> | -n <dev>] [-- <fuse options>]\n"
 				"Transfer files from/to Mobile Equipment.\n"
 				"Copyright (c) 2002-2005 Christian W. Zuckschwerdt\n"
 				"\n"
 				" -i, --irda                  connect using IrDA transport\n"
 				" -b, --bluetooth <device>    connect to this bluetooth device\n"
 				" -B, --channel <number>      use this bluetooth channel when connecting\n"
+				" -d, --hci <no/address>      use source device with this address or number\n"
 				" -u, --usb <interface>       connect to this usb interface number\n"
 				" -t, --tty <device>          connect to this tty using a custom transport\n"
 				" -n, --network <device>      connect to this network host\n\n"
